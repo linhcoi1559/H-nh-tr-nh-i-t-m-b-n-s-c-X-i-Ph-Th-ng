@@ -1,0 +1,25 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Kiểm tra bộ mô hình toàn map</title>
+<style>body{margin:0;background:#16241d;color:#eee;font:13px system-ui}header{padding:6px;display:flex;gap:8px;flex-wrap:wrap}button{padding:7px}iframe{display:block;width:1200px;height:600px;border:0}#result{white-space:pre-line;max-width:1200px}</style>
+<header><button data-view="core">Phố cũ & trường học</button><button data-view="market">Chợ hoa & công viên</button><button data-view="district">Phú Xá mở rộng</button><button data-view="alley">Ngõ 41</button><button id="walk" disabled>Kiểm tra đi bộ và xe</button><button id="hide">Ẩn/hiện HUD</button><button id="restore" disabled>Khôi phục save</button><span id="status">Phiên riêng 127.0.0.1</span></header><div id="result"></div><iframe title="Mô hình toàn map"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot} from '../gameplay-state.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),result=document.querySelector('#result'),keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'];let backup;
+const wait=ms=>new Promise(r=>setTimeout(r,ms)),doc=()=>frame.contentDocument,diag=()=>doc()?.querySelector('#interact-prompt');
+const views={core:{x:4,z:2,yaw:0},market:{x:156,z:-3,yaw:-2.5},district:{x:42,z:-132,yaw:Math.PI},alley:{x:-67,z:-12,yaw:Math.PI}};
+const fire=(code,type)=>frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(type,{code,bubbles:true}));const tap=code=>{fire(code,'keydown');fire(code,'keyup');};
+const pos=()=>diag().dataset.playerPosition.split(',').map(Number);
+const sample=document.createElement('button');sample.textContent='Đo 3 cửa sổ khung hình';document.querySelector('header').append(sample);
+sample.onclick=async()=>{sample.disabled=true;try{const rows=[];let last=0;const deadline=performance.now()+25000;while(rows.length<3){if(performance.now()>deadline)throw Error('Hết thời gian đo');const value=diag()?.dataset.performance;if(value){const row=JSON.parse(value);if(row.at!==last){rows.push(row);last=row.at;}}await wait(100);}result.textContent+='\nBENCHMARK '+JSON.stringify(rows);status.textContent='Đã đo 3 mẫu · cùng medium / 1200×600';}catch(e){status.textContent='FAIL '+e.message;}finally{sample.disabled=false;}};
+async function ready(){const deadline=performance.now()+45000;while(!diag()?.dataset.charactersReady){if(performance.now()>deadline)throw Error('Game/nhân vật chưa sẵn sàng');await wait(100);}}
+for(const button of document.querySelectorAll('[data-view]'))button.onclick=async()=>{try{
+ if(!backup)backup=keys.map(k=>[k,localStorage.getItem(k)]);
+ document.querySelector('#restore').disabled=false;frame.src='about:blank';await wait(500);const p=views[button.dataset.view];
+ localStorage.setItem(SAVE_KEY,encodeSnapshot({coins:50000,playerPosition:{x:p.x,z:p.z},camYaw:p.yaw}));localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',shadows:true,brightness:1,autoTurnHead:false,showWaypoints:false}));
+ status.textContent='Đang dựng '+button.textContent;frame.src='../index.html?playtest=1';await ready();
+ const models=JSON.parse(diag().dataset.modelFamilies);if(!models.human||!models.vegetation||!models.scooter||!models.architecture)throw Error('Thiếu nhóm mô hình');
+ result.textContent='PASS · nhóm mô hình '+JSON.stringify(models)+' · vỏ nhà '+diag().dataset.modelReplacement;status.textContent='Sẵn sàng · '+button.textContent;document.querySelector('#walk').disabled=false;
+ }catch(e){status.textContent='FAIL '+e.message;}};
+document.querySelector('#walk').onclick=async()=>{try{const a=pos();fire('KeyW','keydown');await wait(120);fire('KeyW','keyup');await wait(150);const b=pos();if(Math.hypot(a[0]-b[0],a[1]-b[1])<.1)throw Error('Không di chuyển được');tap('KeyF');await wait(200);if(!doc().querySelector('#motion-label').textContent.includes('xe'))throw Error('Không lên xe');fire('KeyW','keydown');await wait(600);fire('KeyW','keyup');await wait(150);tap('KeyF');await wait(200);result.textContent+='\nPASS · đi bộ, lên xe, chạy xe, xuống xe';}catch(e){result.textContent+='\nFAIL '+e.message;}finally{fire('KeyW','keyup');}};
+document.querySelector('#hide').onclick=()=>{const d=doc();if(!d?.body)return;let style=d.querySelector('#visual-review');if(style){style.remove();return;}style=d.createElement('style');style.id='visual-review';style.textContent='#game-hud-top,#inventory-bar,#community-card,#controls-bar,#character-status,#minimap-container,#daylife-button,#arcade-guide,#district-guide,#street-event-banner,#toast,#pointer-lock-hint,#interact-prompt{display:none!important}';d.head.append(style);};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(500);backup?.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));status.textContent='Đã khôi phục save';};
+</script></html>

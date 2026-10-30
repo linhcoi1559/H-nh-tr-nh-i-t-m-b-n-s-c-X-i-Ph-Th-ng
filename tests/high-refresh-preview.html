@@ -1,0 +1,124 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Kiến trúc và tốc độ khung hình</title>
+<style>body{margin:0;background:#16241d;color:#eee;font:13px system-ui}header{padding:6px;display:flex;gap:8px;flex-wrap:wrap}button{padding:7px}iframe{display:block;width:1200px;height:600px;border:0}#result{white-space:pre-line;max-width:1200px}</style>
+<header><label>Mức đồ họa <select id="preset"><option value="medium">Trung bình</option><option value="performance">Ưu tiên tốc độ</option></select></label><button id="raf">Đo nhịp trình duyệt khi chưa tải game</button><button data-view="core">Phố cũ & trường học</button><button data-view="market">Chợ hoa & công viên</button><button data-view="district">Phú Xá mở rộng</button><button data-view="alley">Ngõ 41</button><button id="walk" disabled>Kiểm tra đi bộ và xe</button><button id="hide">Ẩn/hiện HUD</button><button id="restore" disabled>Khôi phục save</button><span id="status">Phiên riêng 127.0.0.1</span></header><div id="result"></div><iframe title="Mô hình toàn map"></iframe>
+<script type="module">
+import {trafficBodiesOverlap} from '../street-traffic.mjs';
+import {SAVE_KEY,encodeSnapshot} from '../gameplay-state.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),result=document.querySelector('#result'),keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'];let backup;
+const wait=ms=>new Promise(r=>setTimeout(r,ms)),doc=()=>frame.contentDocument,diag=()=>doc()?.querySelector('#interact-prompt');
+const views={core:{x:4,z:2,yaw:0},market:{x:156,z:-3,yaw:-2.5},district:{x:42,z:-132,yaw:Math.PI},transition:{x:42,z:-80,yaw:Math.PI},alley:{x:-67,z:-12,yaw:Math.PI}};
+views.crosswalk={x:-113.4,z:-9,yaw:0};
+const crossingView=document.createElement('button');crossingView.dataset.view='crosswalk';crossingView.textContent='Lối qua đường mới';document.querySelector('header').append(crossingView);
+const crossingWalk=document.createElement('button');crossingWalk.textContent='Đi bộ qua vạch trắng';document.querySelector('header').append(crossingWalk);
+crossingWalk.onclick=async()=>{crossingWalk.disabled=true;try{
+ if(Math.abs(pos()[0]+113.4)>1||pos()[1]>-7)throw Error('Chọn Lối qua đường mới trước');
+ fire('KeyW','keydown');const until=performance.now()+12000;
+ while(pos()[1]<8.2){if(performance.now()>until)throw Error('Bị chặn tại '+pos());await wait(70);}
+ result.textContent+='\nPASS · đi bộ từ vỉa hè qua vạch trắng sang vỉa hè đối diện · '+pos();
+ }catch(e){result.textContent+='\nFAIL '+e.message;}finally{fire('KeyW','keyup');crossingWalk.disabled=false;}};
+const transition=document.createElement('button');transition.dataset.view='transition';transition.textContent='Lối nối Phú Gia';document.querySelector('header').append(transition);
+views.riverbend={x:350,z:-125,yaw:Math.PI};
+const riverbend=document.createElement('button');riverbend.dataset.view='riverbend';riverbend.textContent='Mặt tiền ven sông';document.querySelector('header').append(riverbend);
+views.skyline={x:42,z:-104,yaw:0};
+const skyline=document.createElement('button');skyline.dataset.view='skyline';skyline.textContent='Lối xuyên dãy nền cũ';document.querySelector('header').append(skyline);
+views.mouth={x:42,z:1,yaw:Math.PI};views.eastlink={x:145,z:0,yaw:Math.PI/2};views.newshops={x:210,z:-3.5,yaw:2.18};
+views.phuxacourt={x:-149,z:-108,yaw:-Math.PI/2};
+const courtButton=document.createElement('button');courtButton.dataset.view='phuxacourt';courtButton.textContent='Sân cuối phố Phú Xá';document.querySelector('header').append(courtButton);
+Object.assign(views,{westgarden:{x:-213,z:-37,yaw:Math.PI/2},westexit:{x:-175,z:0,yaw:-Math.PI/2},south:{x:42,z:64,yaw:0},fence:{x:42,z:2,yaw:-.9}});
+views.citybus={x:90,z:-6,yaw:-Math.PI/2,time:9.5};views.citynight={x:42,z:-90,yaw:Math.PI,time:20};
+for(const [key,label]of [['citybus','Xe buýt và dây điện'],['citynight','Đèn phố ban đêm']]){const b=document.createElement('button');b.dataset.view=key;b.textContent=label;document.querySelector('header').append(b);}
+views.police={x:60,z:5.8,yaw:-Math.PI/2};
+views.patrol={x:108,z:3,yaw:0};views.enforcement={x:42,z:0,yaw:Math.PI/2};
+for(const [key,label]of [['patrol','Cận cảnh tuần tra'],['enforcement','Kiểm tra cảnh báo giao thông']]){const b=document.createElement('button');b.dataset.view=key;b.textContent=label;document.querySelector('header').append(b);}
+const chaseTest=document.createElement('button');chaseTest.textContent='Thử truy đuổi và tạm giữ';document.querySelector('header').append(chaseTest);
+chaseTest.onclick=async()=>{chaseTest.disabled=true;try{tap('KeyF');await wait(300);fire('KeyW','keydown');let until=performance.now()+15000;while(JSON.parse(diag().dataset.policeState).stage!=='pursuit'){if(performance.now()>until)throw Error('Chưa có xe đuổi: '+diag().dataset.policeState);await wait(100);}result.textContent+='\nĐang bị xe cảnh sát truy đuổi';fire('KeyW','keyup');fire('Space','keydown');until=performance.now()+45000;while(JSON.parse(diag().dataset.policeState).stage!=='jail'){if(performance.now()>until)throw Error('Chưa bắt giữ: '+diag().dataset.policeState);await wait(100);}fire('Space','keyup');await wait(500);const photo=document.createElement('img');photo.id='detention-proof';photo.alt='Phòng tạm giữ trong game';photo.style.width='800px';photo.src=await new Promise(resolve=>frame.contentWindow.requestAnimationFrame(()=>resolve(doc().querySelector('#canvas-container canvas').toDataURL('image/png'))));result.after(photo);result.textContent+='\nPASS · xe tới bắt, trừ tiền phạt và chuyển vào phòng tạm giữ';until=performance.now()+24000;while(JSON.parse(diag().dataset.policeState).stage==='jail'){if(performance.now()>until)throw Error('Chưa trả tự do');await wait(100);}result.textContent+='\nPASS · hết thời gian, trả tự do tại trụ sở';}catch(e){result.textContent+='\nFAIL '+e.message;}finally{fire('KeyW','keyup');fire('Space','keyup');chaseTest.disabled=false;}};
+const ticketTest=document.createElement('button');ticketTest.textContent='Kiểm tra biên bản và trả phạt';document.querySelector('header').append(ticketTest);
+ticketTest.onclick=async()=>{ticketTest.disabled=true;try{const initial=doc().querySelector('#stat-coins').textContent;tap('KeyF');await wait(300);fire('KeyW','keydown');let until=performance.now()+8000;while(JSON.parse(diag().dataset.policeState).stage!=='warning'){if(performance.now()>until)throw Error('Chưa cảnh báo');await wait(60);}fire('KeyW','keyup');fire('KeyS','keydown');until=performance.now()+12000;while(JSON.parse(diag().dataset.policeState).stage!=='ticket'){if(performance.now()>until)throw Error('Chưa lập biên bản');await wait(60);}fire('KeyS','keyup');fire('Space','keydown');await wait(400);fire('Space','keyup');tap('KeyF');until=performance.now()+30000;while(!doc().querySelector('#interact-prompt').textContent.includes('cán bộ')){if(performance.now()>until)throw Error('Cán bộ chưa tới gần');await wait(100);}tap('KeyE');await wait(300);if(JSON.parse(diag().dataset.policeState).stage!=='patrol')throw Error('Chưa xử lý biên bản');if(doc().querySelector('#stat-coins').textContent===initial)throw Error('Chưa trừ khoản phạt');result.textContent+='\nPASS · lập một biên bản, dừng và xuống xe, E xử lý; '+initial+' → '+doc().querySelector('#stat-coins').textContent;}catch(e){result.textContent+='\nFAIL '+e.message;}finally{for(const code of ['KeyW','KeyS','Space'])fire(code,'keyup');ticketTest.disabled=false;}};
+const compliance=document.createElement('button');compliance.textContent='Chạy quá tốc độ rồi dừng';document.querySelector('header').append(compliance);
+compliance.onclick=async()=>{compliance.disabled=true;try{const initial=doc().querySelector('#stat-coins').textContent;tap('KeyF');await wait(300);fire('KeyW','keydown');let until=performance.now()+8000;while(JSON.parse(diag().dataset.policeState).stage!=='warning'){if(performance.now()>until)throw Error('Chưa nhận cảnh báo: '+diag().dataset.policeState+' / '+diag().dataset.rideState);await wait(70);}fire('KeyW','keyup');fire('Space','keydown');until=performance.now()+5000;while(JSON.parse(diag().dataset.policeState).stage!=='patrol'){if(performance.now()>until)throw Error('Chưa ghi nhận dừng chấp hành');await wait(70);}fire('Space','keyup');if(doc().querySelector('#stat-coins').textContent!==initial)throw Error('Dừng chấp hành vẫn trừ tiền');result.textContent+='\nPASS · nhận cảnh báo, Space dừng xe, chấp hành không bị trừ tiền';}catch(e){result.textContent+='\nFAIL '+e.message;}finally{fire('KeyW','keyup');fire('Space','keyup');compliance.disabled=false;}};
+
+const policeView=document.createElement('button');policeView.dataset.view='police';policeView.textContent='Cảnh sát và giao thông';document.querySelector('header').append(policeView);
+const policeTest=document.createElement('button');policeTest.textContent='Báo trộm K';policeTest.onclick=()=>tap('KeyK');document.querySelector('header').append(policeTest);
+views.drivingtest={x:42,z:64,yaw:0};
+const drivingView=document.createElement('button');drivingView.dataset.view='drivingtest';drivingView.textContent='Phanh, đồng hồ và phím dẫn đường';document.querySelector('header').append(drivingView);
+const drivingCheck=document.createElement('button');drivingCheck.textContent='Thử Space, Y và Tab';document.querySelector('header').append(drivingCheck);
+drivingCheck.onclick=async()=>{drivingCheck.disabled=true;try{
+ if(!diag()?.dataset.charactersReady)throw Error('Tải cảnh kiểm tra trước');
+ const clockText=doc().querySelector('#day-time-pill').textContent;if(!/\d{2}:\d{2}/.test(clockText))throw Error('Thiếu giờ HH:MM');
+ tap('KeyF');await wait(300);tap('KeyY');await wait(350);
+ if(!JSON.parse(diag().dataset.rideState).riding)throw Error('Y làm xuống xe');
+ const target=JSON.parse(diag().dataset.guidance);if(!target?.title||!doc().querySelector('#street-event-title').textContent.includes(target.title))throw Error('Y không dẫn tới sự kiện');
+ fire('KeyW','keydown');fire('ShiftLeft','keydown');
+ const accelerateUntil=performance.now()+12000;while(JSON.parse(diag().dataset.rideState).speed<3&&performance.now()<accelerateUntil)await wait(80);
+ const before=JSON.parse(diag().dataset.rideState).speed;if(before<3)throw Error('Xe chưa đạt tốc độ thử');
+ fire('Space','keydown');const began=performance.now(),until=began+3000;
+ while(Math.abs(JSON.parse(diag().dataset.rideState).speed)>.05){if(performance.now()>until)throw Error('Phanh quá lâu');await wait(30);}
+ const stopMs=performance.now()-began;fire('Space','keyup');fire('ShiftLeft','keyup');fire('KeyW','keyup');
+ fire('KeyW','keydown');await wait(200);tap('Tab');await wait(300);
+ if(Math.abs(JSON.parse(diag().dataset.rideState).speed)>.05)throw Error('Tab chưa dừng xe');
+ result.textContent+='\nPASS · '+clockText+'; Y dẫn đường khi lái; Space dừng từ '+before.toFixed(1)+' m/s trong '+Math.round(stopMs)+' ms; Tab dừng xe';
+ }catch(e){result.textContent+='\nFAIL '+e.message;}finally{for(const code of ['KeyW','ShiftLeft','Space'])fire(code,'keyup');drivingCheck.disabled=false;}};
+views.southlife={x:42,z:89,yaw:.55};views.shoplife={x:19,z:95,yaw:Math.PI};
+for(const [key,label]of [['southlife','Góc xóm Nam đã lấp nền'],['shoplife','Chi tiết sinh hoạt']]){const b=document.createElement('button');b.dataset.view=key;b.textContent=label;document.querySelector('header').append(b);}
+for(const [key,label]of [['westgarden','Vườn đào Phú Thượng'],['westexit','Đường phía Tây'],['south','Xóm Nam'],['fence','Góc hàng rào']]){const b=document.createElement('button');b.dataset.view=key;b.textContent=label;document.querySelector('header').append(b);}
+const busCheck=document.createElement('button');busCheck.textContent='Kiểm tra xe buýt dừng trạm';document.querySelector('header').append(busCheck);
+busCheck.onclick=async()=>{busCheck.disabled=true;try{let arrived=false,until=performance.now()+40000;while(performance.now()<until){const rows=JSON.parse(diag().dataset.trafficState);if(rows.some(v=>v.kind==='bus'&&v.dwell>1)){arrived=true;break;}await wait(100);}if(!arrived)throw Error('Xe buýt chưa dừng trạm trong lượt thử');await wait(700);tap('KeyO');result.textContent+='\nPASS · xe buýt tới trạm, dừng 8 giây và mở cửa';}catch(e){result.textContent+='\nFAIL '+e.message;}finally{busCheck.disabled=false;}};
+const bodyTest=document.createElement('button');bodyTest.textContent='Kiểm tra thân xe 15 giây';document.querySelector('header').append(bodyTest);
+bodyTest.onclick=async()=>{bodyTest.disabled=true;try{const before=JSON.parse(diag().dataset.trafficState);let samples=0;const until=performance.now()+15000;while(performance.now()<until){const rows=JSON.parse(diag().dataset.trafficState);for(let i=0;i<rows.length;i++)for(let j=i+1;j<rows.length;j++)if(trafficBodiesOverlap(rows[i],rows[j],.02))throw Error('Xe '+rows[i].id+' chồng xe '+rows[j].id);samples++;await wait(150);}const after=JSON.parse(diag().dataset.trafficState),moved=after.filter(v=>Math.hypot(v.x-before.find(a=>a.id===v.id).x,v.z-before.find(a=>a.id===v.id).z)>1).length;result.textContent+='\nPASS · '+samples+' mẫu không chồng thân xe; '+moved+'/'+after.length+' xe đã di chuyển';}catch(e){result.textContent+='\nFAIL '+e.message;}finally{bodyTest.disabled=false;}};
+const trafficTest=document.createElement('button');trafficTest.textContent='Kiểm tra xe trên mọi phố';document.querySelector('header').append(trafficTest);
+trafficTest.onclick=async()=>{trafficTest.disabled=true;try{
+ const before=JSON.parse(diag().dataset.trafficState);await wait(8000);const after=JSON.parse(diag().dataset.trafficState);
+ const moved=after.filter(v=>Math.hypot(v.x-before.find(a=>a.id===v.id).x,v.z-before.find(a=>a.id===v.id).z)>1).length;
+ if(after.length!==20||new Set(after.map(v=>v.street)).size!==10||moved<15)throw Error(JSON.stringify({total:after.length,moved,after}));
+ result.textContent+='\nPASS · 10 phố, 10 xe máy, 10 ô tô; '+moved+'/20 xe di chuyển trong 8 giây';
+ }catch(e){result.textContent+='\nFAIL '+e.message;}finally{trafficTest.disabled=false;}};
+for(const [name,axis,target,check]of [
+ ['Lái qua cửa Tây',0,-207,p=>p[0]<-168&&p[0]>-180&&Math.abs(p[1])<2],
+ ['Lái xuống Xóm Nam',1,85,p=>Math.abs(p[0]-42)<2&&p[1]>60&&p[1]<70]
+]){
+ const b=document.createElement('button');b.textContent=name;document.querySelector('header').append(b);
+ b.onclick=async()=>{b.disabled=true;try{
+  if(!diag()?.dataset.charactersReady||!check(pos()))throw Error('Chọn đúng cảnh trước khi lái');
+  tap('KeyF');await wait(300);fire('KeyW','keydown');const until=performance.now()+20000;
+  while(axis===0?pos()[axis]>target:pos()[axis]<target){if(performance.now()>until)throw Error('Bị chặn tại '+pos());await wait(60);}
+  fire('KeyW','keyup');fire('Space','keydown');await wait(1500);fire('Space','keyup');result.textContent+='\nPASS · '+name+' · '+pos();
+ }catch(e){result.textContent+='\nFAIL '+e.message;}finally{fire('KeyW','keyup');fire('Space','keyup');b.disabled=false;}};
+}
+for(const [key,label]of [['mouth','Miệng đường Phú Gia'],['eastlink','Đầu phố mới phía chợ'],['newshops','Dãy phố mới']]){const button=document.createElement('button');button.dataset.view=key;button.textContent=label;document.querySelector('header').append(button);}
+const crossing=document.createElement('button');crossing.textContent='Lái qua ranh giới cũ';document.querySelector('header').append(crossing);
+const eastDrive=document.createElement('button');eastDrive.textContent='Lái qua đầu phố mới';document.querySelector('header').append(eastDrive);
+eastDrive.onclick=async()=>{eastDrive.disabled=true;try{
+ if(!diag()?.dataset.charactersReady||pos()[0]<140||pos()[0]>150)throw Error('Chọn Đầu phố mới phía chợ trước');
+ tap('KeyF');await wait(250);fire('KeyW','keydown');const until=performance.now()+16000;
+ while(pos()[0]<200){if(performance.now()>until)throw Error('Bị chặn tại '+pos());await wait(80);}
+ fire('KeyW','keyup');fire('Space','keydown');await wait(1200);fire('Space','keyup');
+ result.textContent+='\nPASS · lái qua ranh giới Đông x=162 tới phố mới · '+pos();
+ }catch(e){result.textContent+='\nFAIL '+e.message;}finally{fire('KeyW','keyup');fire('Space','keyup');eastDrive.disabled=false;}};
+crossing.onclick=async()=>{crossing.disabled=true;try{
+ if(!diag()?.dataset.charactersReady)throw Error('Tải lối xuyên dãy nền trước');
+ if(pos()[1]>-90||Math.abs(pos()[0]-42)>1)throw Error('Chọn Lối xuyên dãy nền cũ trước khi thử');
+ tap('KeyF');await wait(250);fire('KeyW','keydown');const until=performance.now()+16000;
+ while(pos()[1]<-50){if(performance.now()>until)throw Error('Bị chặn tại '+pos());await wait(80);}
+ fire('KeyW','keyup');fire('Space','keydown');await wait(1200);fire('Space','keyup');
+ result.textContent+='\nPASS · lái từ Phú Gia qua z=-68 tới phố cũ · '+pos();
+ }catch(e){result.textContent+='\nFAIL '+e.message;}finally{fire('KeyW','keyup');fire('Space','keyup');crossing.disabled=false;}};
+const fire=(code,type)=>frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(type,{code,bubbles:true}));const tap=code=>{fire(code,'keydown');fire(code,'keyup');};
+const pos=()=>diag().dataset.playerPosition.split(',').map(Number);
+document.querySelector('#raf').onclick=async()=>{if(frame.src&&frame.src!=='about:blank'){status.textContent='Khôi phục save trước khi đo nhịp trống';return;}const deltas=[];let prev;await new Promise(resolve=>{function step(time){if(prev!==undefined)deltas.push(time-prev);prev=time;if(deltas.length<150)requestAnimationFrame(step);else resolve();}requestAnimationFrame(step);});deltas.sort((a,b)=>a-b);const median=deltas[Math.floor(deltas.length/2)];result.textContent='Nhịp RAF khi chưa tải game: '+(1000/median).toFixed(1)+' Hz · trung vị '+median.toFixed(2)+' ms. Đây là nhịp phiên trình duyệt, không phải xác nhận thông số màn hình.';};
+const sample=document.createElement('button');sample.textContent='Đo 3 cửa sổ khung hình';document.querySelector('header').append(sample);
+sample.onclick=async()=>{sample.disabled=true;try{const rows=[];let last=0;const deadline=performance.now()+25000;while(rows.length<3){if(performance.now()>deadline)throw Error('Hết thời gian đo');const value=diag()?.dataset.performance;if(value){const row=JSON.parse(value);if(row.at!==last){rows.push(row);last=row.at;}}await wait(100);}result.textContent+='\nBENCHMARK '+document.querySelector('#preset').value+' '+JSON.stringify(rows);status.textContent='Đã đo 3 mẫu · '+document.querySelector('#preset').value+' / 1200×600';}catch(e){status.textContent='FAIL '+e.message;}finally{sample.disabled=false;}};
+async function ready(){const deadline=performance.now()+45000;while(!diag()?.dataset.charactersReady){if(performance.now()>deadline)throw Error('Game/nhân vật chưa sẵn sàng');await wait(100);}}
+for(const button of document.querySelectorAll('[data-view]'))button.onclick=async()=>{try{
+ document.querySelector('#detention-proof')?.remove();
+ if(!backup)backup=keys.map(k=>[k,localStorage.getItem(k)]);
+ document.querySelector('#restore').disabled=false;frame.src='about:blank';await wait(500);const p=views[button.dataset.view];
+ localStorage.setItem(SAVE_KEY,encodeSnapshot({coins:50000,time:p.time??9.5,playerPosition:{x:p.x,z:p.z},camYaw:p.yaw}));localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:document.querySelector('#preset').value,camMode:'fps',shadows:true,brightness:1,autoTurnHead:false,showWaypoints:false}));
+ status.textContent='Đang dựng '+button.textContent;frame.src='../index.html?playtest=1'+(button.dataset.view==='enforcement'?'&policeDriveTest=1':button.dataset.view==='police'?'&eventTest=1&policeTest=1':button.dataset.view==='drivingtest'?'&eventTest=1':'');await ready();
+ const models=JSON.parse(diag().dataset.modelFamilies);if(!models.human||!models.vegetation||!models.scooter||!models.architecture)throw Error('Thiếu nhóm mô hình');
+ result.textContent='PASS · nhóm mô hình '+JSON.stringify(models)+' · vỏ nhà '+diag().dataset.modelReplacement+' · gộp '+diag().dataset.staticCompilation;status.textContent='Sẵn sàng · '+button.textContent;document.querySelector('#walk').disabled=false;if(button.dataset.view==='police')tap('KeyK');
+ }catch(e){status.textContent='FAIL '+e.message;}};
+document.querySelector('#walk').onclick=async()=>{try{const a=pos();fire('KeyW','keydown');await wait(120);fire('KeyW','keyup');await wait(150);const b=pos();if(Math.hypot(a[0]-b[0],a[1]-b[1])<.1)throw Error('Không di chuyển được');tap('KeyF');await wait(200);if(!doc().querySelector('#motion-label').textContent.includes('xe'))throw Error('Không lên xe');fire('KeyW','keydown');await wait(600);fire('KeyW','keyup');await wait(150);tap('KeyF');await wait(200);result.textContent+='\nPASS · đi bộ, lên xe, chạy xe, xuống xe';}catch(e){result.textContent+='\nFAIL '+e.message;}finally{fire('KeyW','keyup');}};
+document.querySelector('#hide').onclick=()=>{const d=doc();if(!d?.body)return;let style=d.querySelector('#visual-review');if(style){style.remove();return;}style=d.createElement('style');style.id='visual-review';style.textContent='#settings-modal,#game-hud-top,#inventory-bar,#community-card,#controls-bar,#character-status,#minimap-container,#daylife-button,#daylife-tracker,#shipper-hud,#arcade-guide,#district-guide,#street-event-banner,#toast,#pointer-lock-hint,#interact-prompt{display:none!important}';d.head.append(style);};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(500);backup?.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));status.textContent='Đã khôi phục save';};
+</script></html>
+

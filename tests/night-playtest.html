@@ -1,0 +1,218 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Night 41 · browser playtest</title>
+<style>body{margin:0;background:#101918;color:#d1ddcc;font:14px system-ui}header{padding:12px;display:flex;gap:15px;align-items:center}button{padding:10px;cursor:pointer}pre{padding:12px;white-space:pre-wrap}iframe{width:100%;height:720px;border:0}</style>
+<header><button id="run">Chạy kiểm thử đêm đầu</button><button id="fail-run">Kiểm thử bị bắt và phục hồi</button><span>Chỉ phục vụ kiểm thử cục bộ · tự khôi phục save sau khi chạy.</span></header><pre id="log">Chưa chạy.</pre><iframe title="Game đang kiểm thử" id="game"></iframe>
+<script type="module">
+import { SAVE_KEY, encodeSnapshot } from '../gameplay-state.mjs';
+const frame = document.querySelector('#game');
+const log = document.querySelector('#log');
+const keys = [SAVE_KEY, 'phu_thuong_story_revision', 'phu_thuong_game_settings_v3'];
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+let passed = 0;
+const report = message => { log.textContent += '\n' + message; };
+const doc = () => frame.contentDocument;
+const visible = element => element && !element.closest('.hidden') && getComputedStyle(element).display !== 'none';
+async function waitFor(predicate, label, timeout = 12000) {
+  const start = performance.now();
+  while (!predicate()) {
+    if (performance.now() - start > timeout) throw new Error('Timeout: ' + label);
+    await pause(40);
+  }
+}
+async function click(id) {
+  await waitFor(() => visible(doc().querySelector(id)), id);
+  doc().querySelector(id).click();
+  await pause(80);
+}
+async function choice(text) {
+  const find = () => [...doc().querySelectorAll('#night-actions button')].find(button => button.textContent === text);
+  await waitFor(() => visible(find()), text);
+  find().click();
+  await pause(80);
+}
+function check(condition, label) {
+  if (!condition) throw new Error(label);
+  report('✓ ' + label);
+  passed++;
+}
+function keyboard(code, down) {
+  frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code.slice(3).toLowerCase(), bubbles: true }));
+}
+function position() {
+  return doc().querySelector('#interact-prompt').dataset.playerPosition.split(',').map(Number);
+}
+async function moveAxis(axis, destination) {
+  const deadline = performance.now() + 22000;
+  let held = null;
+  try {
+    while (Math.abs(position()[axis] - destination) > .28) {
+      if (visible(doc().querySelector('#horror-choice')) || visible(doc().querySelector('#story-fail'))) break;
+      if (performance.now() > deadline) throw new Error(`Movement blocked at ${position()}, wanted axis ${axis}: ${destination}`);
+      const difference = destination - position()[axis];
+      const code = axis === 0 ? difference > 0 ? 'KeyD' : 'KeyA' : difference > 0 ? 'KeyS' : 'KeyW';
+      if (code !== held) {
+        if (held) keyboard(held, false);
+        keyboard(code, true);
+        held = code;
+      }
+      await pause(30);
+    }
+  } finally {
+    if (held) keyboard(held, false);
+  }
+  await pause(220);
+}
+async function dismissDialogue() {
+  while (visible(doc().querySelector('#story-dialogue'))) await click('#story-dialogue-next');
+}
+async function start() {
+  await click('#story-mode-btn');
+  await click('#story-start-btn');
+  await waitFor(() => visible(doc().querySelector('#horror-objective')), 'story starts');
+}
+document.querySelector('#run').addEventListener('click', async () => {
+  document.querySelector('#run').disabled = true;
+  const backup = keys.map(key => [key, localStorage.getItem(key)]);
+  log.textContent = 'Đang chạy qua giao diện game và bàn phím…';
+  passed = 0;
+  try {
+    localStorage.setItem(SAVE_KEY, encodeSnapshot({ coins: 50000, time: 18.65 }));
+    localStorage.setItem(keys[1], '2');
+    localStorage.setItem(keys[2], JSON.stringify({ preset: 'low', autoTurnHead: false, camMode: 'fps', showWaypoints: false }));
+    frame.src = '../index.html?playtest=1';
+    await waitFor(() => doc()?.querySelector('#interact-prompt')?.dataset.playerPosition, 'game loaded', 20000);
+    await start();
+    await click('#interact-prompt');
+    await choice('Xôi lạc');
+    check(doc().querySelector('#night-feedback').textContent.includes('Chưa đúng'), 'Sai loại xôi có phản hồi và không hoàn thành đơn');
+    for (const [index, [base, topping]] of [['Xôi xéo', 'Hành phi'], ['Xôi lạc', 'Muối vừng'], ['Nếp trắng', 'Không thêm']].entries()) {
+      await choice(base); await choice(topping);
+      if (index < 2) await choice('Gọi khách tiếp theo');
+      else await choice('Cầm đơn cuối và đọc hóa đơn');
+    }
+    await dismissDialogue();
+    check(doc().querySelector('#interact-prompt').dataset.horrorStage === '1', 'Ba đơn mở khóa tuyến giao hàng');
+    await moveAxis(1, -37);
+    await moveAxis(0, -68.2);
+    await moveAxis(1, -22.4);
+    await waitFor(() => !doc().querySelector('#interact-prompt').classList.contains('hidden'), 'photo prompt');
+    await click('#interact-prompt');
+    check(doc().querySelector('#night-title').textContent === 'Ảnh hai anh em', 'Đi thật qua ngách, tìm và đọc ảnh trong thế giới');
+    await click('#night-close');
+    await moveAxis(1, -28.8);
+    await click('#interact-prompt'); await dismissDialogue();
+    await choice('Giữ im lặng · lùi khỏi cửa');
+    check(doc().querySelector('#interact-prompt').dataset.horrorStage === '2', 'Tiếng gọi có lựa chọn và tiến độ tiếp tục đúng');
+    await moveAxis(1, -36.9);
+    await click('#interact-prompt');
+    await choice('Đèn bàn thờ');
+    check(doc().querySelector('#night-feedback').textContent.includes('cầu chì'), 'Bật sai tủ điện làm nhảy cầu chì');
+    await choice('Đèn hiên'); await choice('Đèn ngõ'); await choice('Đèn bàn thờ');
+    await dismissDialogue();
+    check(doc().querySelector('#interact-prompt').dataset.horrorStage === '3', 'Thứ tự từ ảnh mở điện và kích hoạt tuần tra');
+    // Turn off torch and move quietly; an open notebook pauses the encounter.
+    keyboard('KeyT', true); keyboard('KeyT', false);
+    await moveAxis(0, -66.2);
+    await moveAxis(1, -38.5);
+    await click('#interact-prompt');
+    check(doc().querySelector('#night-title').textContent === 'Viên bi ve của An', 'Vật chứng thứ hai có thể lấy khi tuần tra hoạt động');
+    await click('#night-close');
+    await moveAxis(0, -67.5);
+    await moveAxis(1, -44.1);
+    await click('#interact-prompt');
+    check(doc().querySelector('#night-title').textContent === 'Huy hiệu cháy xém', 'Huy hiệu cung cấp manh mối về Phú Gia');
+    await click('#night-close');
+    await moveAxis(1, -45.3);
+    await click('#interact-prompt'); await dismissDialogue();
+    check(doc().querySelector('#interact-prompt').dataset.horrorStage === '4', 'Cuộc gọi mở cuộn băng');
+    await click('#interact-prompt'); await dismissDialogue();
+    check(doc().querySelector('#interact-prompt').dataset.horrorStage === '5', 'Nghe băng mở lối thoát');
+    report('Mẫu trong ngõ: ' + doc().querySelector('#performance-readout').textContent);
+    keyboard('ShiftLeft', true);
+    await moveAxis(1, -11.7);
+    keyboard('ShiftLeft', false);
+    await waitFor(() => visible(doc().querySelector('#horror-choice')), 'exit choice');
+    check(!doc().querySelector('#ending-peace-btn').disabled, 'Ba vật chứng + đúng điện + im lặng mở kết giữ lời hứa');
+    await click('#ending-peace-btn');
+    check(doc().querySelector('#night-title').textContent === 'Lời hứa mùa xôi mới', 'Kết thúc có màn kết và hệ quả');
+    await click('#night-close');
+    await waitFor(() => JSON.parse(localStorage.getItem(SAVE_KEY)).horrorEnding === 'peace', 'ending saved');
+    const saved = JSON.parse(localStorage.getItem(SAVE_KEY));
+    check(saved.horrorEnding === 'peace' && saved.night.evidence.length === 3 && saved.night.orders === 3, 'Save giữ kết thúc, vật chứng và ba đơn');
+    const performanceText = doc().querySelector('#performance-readout').textContent;
+    report('Mẫu hiệu năng: ' + performanceText);
+    await new Promise(resolve => {
+      frame.addEventListener('load', resolve, { once: true });
+      frame.contentWindow.location.reload();
+    });
+    await waitFor(() => doc()?.querySelector('#interact-prompt')?.dataset.playerPosition, 'reload game');
+    await click('#story-mode-btn');
+    await click('#story-start-btn');
+    await click('#interact-prompt');
+    check(doc().querySelector('#night-title').textContent.includes('Đơn 1/3'), 'Chơi lại sau kết thúc bắt đầu ca mới');
+    await click('#night-close');
+    report(`PASS ${passed} kiểm tra · toàn tuyến đêm đầu`);
+    document.body.dataset.result = 'pass';
+  } catch (error) {
+    report('FAIL: ' + error.message);
+    report('Position/stage: ' + (doc()?.querySelector('#interact-prompt')?.dataset.playerPosition || '?') + ' / ' + (doc()?.querySelector('#interact-prompt')?.dataset.horrorStage || '?'));
+    document.body.dataset.result = 'fail';
+  } finally {
+    ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft'].forEach(code => keyboard(code, false));
+    // Unload the test game before restoring the original save (its beforeunload also saves).
+    frame.src = 'about:blank';
+    await pause(500);
+    backup.forEach(([key, value]) => value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value));
+    document.querySelector('#run').disabled = false;
+    report('Đã khôi phục dữ liệu có trước kiểm thử.');
+  }
+});
+
+document.querySelector('#fail-run').addEventListener('click', async () => {
+  document.querySelectorAll('header button').forEach(button => { button.disabled = true; });
+  const backup = keys.map(key => [key, localStorage.getItem(key)]);
+  log.textContent = 'Đang kiểm thử bị bắt, nơi trú và giữ tiến độ…';
+  passed = 0;
+  try {
+    localStorage.setItem(SAVE_KEY, encodeSnapshot({ coins: 50000, time: 18.65, horrorChapterStage: 5,
+      night: { orders: 3, evidence: ['photo', 'marble', 'badge'], power: true, voiceAnswered: true, voiceEncountered: true, battery: 12, composure: 35 } }));
+    localStorage.setItem(keys[1], '2');
+    localStorage.setItem(keys[2], JSON.stringify({ preset: 'low', autoTurnHead: false, camMode: 'fps', showWaypoints: false }));
+    frame.src = '../index.html?playtest=1';
+    await waitFor(() => doc()?.querySelector('#interact-prompt')?.dataset.playerPosition, 'game loaded', 20000);
+    await start();
+    await click('#interact-prompt');
+    check(doc().querySelector('#night-title').textContent === 'Trở về quán xôi', 'Tiếp tục truyện xuất hiện tại nơi trú');
+    await choice('Đổi pin đã sạc · nghỉ lấy lại bình tĩnh');
+    check(doc().querySelector('#story-battery').textContent === '100%', 'Đổi pin hồi phục tài nguyên khi gần cạn');
+    await click('#night-close');
+    await moveAxis(1, -37);
+    await moveAxis(0, -67);
+    await moveAxis(1, -49);
+    await waitFor(() => visible(doc().querySelector('#story-fail')), 'entity catches player', 15000);
+    check(visible(doc().querySelector('#story-fail')), 'Thực thể phát hiện và bắt được người đi về phía nó');
+    await click('#story-retry-btn');
+    await pause(250);
+    check(position()[0] < -86 && position()[1] < -38.2, 'Chơi lại đưa về quán an toàn');
+    await click('#night-notebook-btn');
+    check(doc().querySelectorAll('.night-evidence:not(.missing)').length === 3, 'Bị bắt không làm mất vật chứng');
+    await click('#night-close');
+    await click('#story-mode-btn');
+    await pause(600);
+    const saved = JSON.parse(localStorage.getItem(SAVE_KEY));
+    check(saved.night.voiceAnswered && saved.night.evidence.length === 3 && saved.horrorChapterStage === 5, 'Tiếp tục và tạm dừng giữ lựa chọn và tiến độ');
+    report(`PASS ${passed} kiểm tra · bị bắt và phục hồi`);
+    document.body.dataset.result = 'pass';
+  } catch (error) {
+    report('FAIL: ' + error.message);
+    report('Position/stage: ' + (doc()?.querySelector('#interact-prompt')?.dataset.playerPosition || '?') + ' / ' + (doc()?.querySelector('#interact-prompt')?.dataset.horrorStage || '?'));
+    document.body.dataset.result = 'fail';
+  } finally {
+    ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft'].forEach(code => keyboard(code, false));
+    frame.src = 'about:blank';
+    await pause(500);
+    backup.forEach(([key, value]) => value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value));
+    document.querySelectorAll('header button').forEach(button => { button.disabled = false; });
+    report('Đã khôi phục dữ liệu có trước kiểm thử.');
+  }
+});
+</script></html>

@@ -1,0 +1,71 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Kiểm thử việc khu phố</title>
+<style>body{margin:0;min-width:1280px;background:#10251f;color:#e6e9da;font:14px system-ui}header{padding:12px;display:flex;gap:12px}button{padding:10px}iframe{border:0;width:1280px;height:800px}#results{white-space:pre-line;padding:12px}</style>
+<header><button id="load">Mở phiên thử riêng</button><button id="run" disabled>Thử trọn ca dọn ngõ</button><button id="board" disabled>Mở việc hôm nay</button><button id="restore" disabled>Khôi phục save</button><span id="status">Dùng 127.0.0.1 · không đổi save localhost.</span></header><div id="results"></div><iframe id="game" title="Game kiểm thử"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot,parseSnapshot} from '../gameplay-state.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),results=document.querySelector('#results');
+const keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'];let backup=null;
+const mode=new URLSearchParams(location.search).get('mode')||'cleanup';
+const wait=ms=>new Promise(r=>setTimeout(r,ms)),doc=()=>frame.contentDocument;
+function key(code,down=true){frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(down?'keydown':'keyup',{code,bubbles:true}));}
+function tap(code){key(code);key(code,false);}
+const pos=()=>doc().querySelector('#interact-prompt').dataset.playerPosition.split(',').map(Number);
+async function until(fn,ms=25000){const t=performance.now()+ms;while(!fn()){if(performance.now()>t)throw new Error('Hết thời gian chờ');await wait(50);}}
+function click(text){const b=[...doc().querySelectorAll('#daylife-modal button')].find(b=>b.textContent.startsWith(text));if(!b)throw new Error('Không có nút '+text);b.click();}
+async function axis(index,target){let held;const deadline=performance.now()+18000;try{while(Math.abs(pos()[index]-target)>.25){if(performance.now()>deadline)throw new Error('Đường bị chặn tại '+pos());const positive=target>pos()[index];const code=index===0?(positive?'KeyD':'KeyA'):(positive?'KeyS':'KeyW');if(code!==held){if(held)key(held,false);key(code);held=code;}await wait(30);}}finally{if(held)key(held,false);}await wait(250);}
+function check(value,label){if(!value)throw new Error(label);results.textContent+='✓ '+label+'\n';}
+document.querySelector('#load').onclick=async()=>{
+  try{
+    backup=keys.map(k=>[k,localStorage.getItem(k)]);
+    const position=mode==='delivery'?{x:-10.5,z:5}:mode==='photo'?{x:-2.2,z:8.2}:{x:-48,z:-7.7};
+    const yaw=mode==='photo'?Math.atan2(11.7,12.1):Math.PI;
+    localStorage.setItem(SAVE_KEY,encodeSnapshot({day:1,coins:50000,playerPosition:position,camYaw:yaw,daylife:mode==='photo'?{day:1,active:{id:'album',done:[],quality:100,remaining:110},projects:{heritage:1}}:undefined}));
+    localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',autoTurnHead:false,brightness:1,showWaypoints:false}));
+    frame.src='../index.html?playtest=1';await until(()=>doc()?.querySelector('#daylife-button'));await until(()=>doc()?.querySelector('#interact-prompt')?.dataset.playerPosition);
+    document.querySelector('#load').disabled=true;document.querySelector('#run').disabled=false;document.querySelector('#board').disabled=false;document.querySelector('#restore').disabled=false;status.textContent='Sẵn sàng · Medium · x=-48, z=-7.7';
+  }catch(e){status.textContent=e.message;document.querySelector('#restore').disabled=!backup;}
+};
+document.querySelector('#board').onclick=()=>tap('KeyN');
+document.querySelector('#run').onclick=async()=>{
+  document.querySelector('#run').disabled=true;results.textContent='';
+  try{
+    if(mode==='delivery'){
+      tap('KeyN');const card=[...doc().querySelectorAll('.daylife-job')].find(e=>e.textContent.includes('Chuyến xôi đầu ngõ'));card.querySelector('button').click();tap('KeyE');
+      check(doc().querySelector('#daylife-title').textContent.includes('Gói xôi'),'Gánh xôi mở trò chốt nhịp');
+      tap('Space');tap('Space');tap('Space');await wait(350);
+      check(doc().querySelector('#daylife-tracker').textContent.includes('thưởng nóng'),'Gói xong bắt đầu thời gian giao hàng');
+      tap('KeyN');await wait(300);const before=doc().querySelector('#daylife-tracker').textContent;await wait(1300);
+      check(doc().querySelector('#daylife-tracker').textContent===before,'Đọc bảng việc dừng thời gian giao hàng');
+      tap('KeyN');await wait(1500);check(doc().querySelector('#daylife-tracker').textContent!==before,'Đóng bảng thì thời gian tiếp tục');
+      const saved=parseSnapshot(localStorage.getItem(SAVE_KEY));check(saved.daylife.active.done.includes('pack'),'Save giữ gói xôi đã làm');status.textContent='PASS · gói xôi + thưởng nóng + tạm dừng';return;
+    }
+    if(mode==='photo'){
+      tap('KeyP');await wait(700);let saved=parseSnapshot(localStorage.getItem(SAVE_KEY));
+      check(saved.daylife.active.done.includes('photo0'),'P chụp đúng cảnh và đúng hướng');
+      check(saved.daylife.gallery.length===1&&saved.daylife.gallery[0].length>1000,'Ảnh JPEG thật được lưu trong album');
+      const coins=saved.coins;tap('KeyP');await wait(500);saved=parseSnapshot(localStorage.getItem(SAVE_KEY));
+      check(saved.daylife.active.done.length===1&&saved.coins===coins,'Không lặp tiến độ hoặc trả thưởng khi chụp lại');
+      tap('KeyN');await until(()=>doc().querySelector('.daylife-gallery img')?.naturalWidth>0);
+      check(doc().querySelector('.daylife-gallery img').naturalWidth===256,'Ảnh đã lưu hiển thị lại trong bảng việc');status.textContent='PASS · chụp đúng hướng + JPEG + album';return;
+    }
+    tap('KeyN');check(!doc().querySelector('#daylife-modal').hidden,'N mở bảng việc');
+    const card=[...doc().querySelectorAll('.daylife-job')].find(e=>e.textContent.includes('Trả lại lối đi sạch'));card.querySelector('button').click();
+    tap('KeyE');await axis(0,-56);tap('KeyE');await axis(0,-61);tap('KeyE');await axis(0,-52.5);tap('KeyE');
+    check(doc().querySelector('#daylife-title').textContent.includes('Phân loại'),'Ba điểm nhặt mở trò phân loại');
+    click('Còn lại');check(doc().querySelector('#daylife-content').textContent.includes('Chưa đúng'),'Chọn nhầm có phản hồi và được sửa');
+    click('Hữu cơ');click('Còn lại');click('Tái chế');
+    check(doc().querySelector('#daylife-title').textContent.includes('chọn phần thưởng'),'Hoàn thành phân loại mới mở nhận thưởng');
+    click('Góp nửa thù lao');
+    tap('KeyN');check(doc().querySelector('#daylife-content').textContent.includes('Điểm đóng góp: 2'),'Nhận 2 điểm khi góp quỹ');
+    click('🌿 Góc xanh');check(doc().querySelector('#daylife-content').textContent.includes('Cấp 1/3'),'Xây góc xanh cấp 1');
+    check(doc().querySelector('#daylife-content').textContent.includes('Điểm đóng góp: 0'),'Xây trừ đúng 2 điểm');
+    tap('KeyN');await wait(700);
+    const saved=parseSnapshot(localStorage.getItem(SAVE_KEY));check(saved.daylife.projects.green===1&&saved.daylife.completed.includes('cleanup'),'Autosave lưu công trình và ca hoàn thành');
+    frame.contentWindow.location.reload();await wait(500);await until(()=>doc()?.querySelector('#daylife-button'));await until(()=>doc()?.querySelector('#interact-prompt')?.dataset.playerPosition);tap('KeyN');
+    check(doc().querySelector('#daylife-content').textContent.includes('Cấp 1/3'),'Tải lại giữ công trình cấp 1');
+    check([...doc().querySelectorAll('.daylife-job')].find(e=>e.textContent.includes('Trả lại lối đi sạch')).querySelector('button').disabled,'Không nhận thưởng lặp lại cùng ca');
+    status.textContent='PASS · ca dọn ngõ + xây/lưu/tải lại';
+  }catch(e){status.textContent='FAIL · '+e.message;results.textContent+='✗ '+e.message;}
+};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(500);backup?.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));backup=null;document.querySelector('#restore').disabled=true;document.querySelector('#board').disabled=true;status.textContent='Đã khôi phục save riêng.';};
+</script></html>

@@ -1,0 +1,46 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Rà soát game · UI và điều khiển</title>
+<style>body{margin:0;background:#12261e;color:#e8e6cf;font:13px system-ui}header{display:flex;gap:8px;padding:8px;flex-wrap:wrap}button{padding:8px}iframe{display:block;width:1200px;height:700px;border:0}#results{white-space:pre-line;padding:10px}</style>
+<header><button id="load">Mở phiên kiểm tra</button><button id="run" disabled>Kiểm tra lỗi thao tác</button><button id="mobile">Khung hẹp</button><button id="desktop">Khung rộng</button><button id="restore" disabled>Khôi phục save</button><span id="status">Dữ liệu riêng 127.0.0.1</span></header><div id="results"></div><iframe title="Game đang kiểm tra"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot,parseSnapshot} from '../gameplay-state.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),results=document.querySelector('#results');let backup;
+const keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'],doc=()=>frame.contentDocument,wait=ms=>new Promise(r=>setTimeout(r,ms));
+const diagnostic=()=>doc().querySelector('#interact-prompt'),position=()=>diagnostic().dataset.playerPosition.split(',').map(Number);
+const key=(code,type='keydown')=>frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(type,{code,bubbles:true}));
+const tap=code=>{key(code);key(code,'keyup');};
+const check=(value,label)=>{if(!value)throw Error(label);results.textContent+='✓ '+label+'\n';};
+document.querySelector('#load').onclick=async()=>{try{
+ backup=keys.map(k=>[k,localStorage.getItem(k)]);localStorage.setItem(SAVE_KEY,encodeSnapshot({coins:50000,playerPosition:{x:-40.6,z:18.1},camYaw:0}));localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',autoTurnHead:false}));frame.src='../index.html?playtest=1';
+ const deadline=performance.now()+30000;while(!doc()?.querySelector('#interact-prompt')?.dataset.cameraState){if(performance.now()>deadline)throw Error('Game không sẵn sàng');await wait(100);}
+ document.querySelector('#load').disabled=true;document.querySelector('#run').disabled=false;document.querySelector('#restore').disabled=false;status.textContent='Sẵn sàng';
+}catch(e){status.textContent='FAIL '+e.message;}};
+document.querySelector('#run').onclick=async()=>{try{
+ document.querySelector('#run').disabled=true;
+ check(doc().querySelector('.quest-banner').getBoundingClientRect().width>=250,'Khung rộng: nhiệm vụ có chiều rộng đọc được');
+ tap('KeyE');check(!doc().querySelector('#arcade-modal').hidden,'Mở đúng bàn Texas');
+ const camera=diagnostic().dataset.cameraState;
+ frame.contentWindow.dispatchEvent(new frame.contentWindow.WheelEvent('wheel',{deltaY:500,bubbles:true}));await wait(100);
+ check(diagnostic().dataset.cameraState===camera,'Cuộn trong cửa sổ không đổi camera phía sau');
+ const before=position();key('ArrowUp');tap('Escape');await wait(250);key('ArrowUp','keyup');
+ check(Math.hypot(position()[0]-before[0],position()[1]-before[1])<.1,'Phím mũi tên trong bàn không làm nhân vật đi sau khi đóng');
+ key('KeyW');frame.contentWindow.dispatchEvent(new frame.contentWindow.Event('blur'));await wait(250);
+ check(Math.hypot(position()[0]-before[0],position()[1]-before[1])<.1,'Rời cửa sổ xóa phím giữ và quán tính');
+ tap('KeyE');const section=doc().querySelector('#arcade-modal');
+ const deal=[...section.querySelectorAll('button')].find(b=>b.textContent==='Chia bài Texas Hold’em');
+ const storagePrototype=frame.contentWindow.Storage.prototype,original=storagePrototype.setItem;
+ try{
+  storagePrototype.setItem=function(k,v){if(k===SAVE_KEY)throw new frame.contentWindow.DOMException('test quota','QuotaExceededError');return original.call(this,k,v);};
+  deal.click();check(doc().querySelector('#save-indicator').textContent.includes('Chưa lưu'),'Lưu lỗi hiện thông báo thay vì báo đã lưu');
+  check(section.querySelectorAll('.holdem-seat').length===4,'Lỗi lưu không làm ngắt lượt chia bài');
+ }finally{storagePrototype.setItem=original;}
+ const pause=[...section.querySelectorAll('button')].find(b=>b.textContent==='Ⅱ Tạm dừng');pause.click();
+ check(parseSnapshot(localStorage.getItem(SAVE_KEY)).arcade.pending?.game==='texas','Lưu phục hồi giữ đúng ván đang chơi');
+ tap('Escape');frame.style.width='390px';frame.style.height='740px';await wait(250);
+ check(doc().querySelector('.quest-banner').getBoundingClientRect().width>=350,'Khung hẹp: nhiệm vụ nằm ngang thay vì cột chữ');
+ check(doc().documentElement.scrollWidth<=doc().documentElement.clientWidth,'Khung hẹp không tràn ngang toàn trang');
+ check(doc().querySelector('.hud-actions').scrollWidth>doc().querySelector('.hud-actions').clientWidth,'Thanh nút hẹp cuộn riêng, không ép nhiệm vụ');
+ status.textContent='PASS · UI rộng/hẹp · camera · phím giữ · lỗi lưu/phục hồi';
+}catch(e){status.textContent='FAIL '+e.message;results.textContent+='✗ '+e.message;}};
+document.querySelector('#mobile').onclick=()=>{frame.style.width='390px';frame.style.height='740px';};document.querySelector('#desktop').onclick=()=>{frame.style.width='1200px';frame.style.height='700px';};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(500);backup?.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));status.textContent='Đã khôi phục dữ liệu';};
+</script></html>

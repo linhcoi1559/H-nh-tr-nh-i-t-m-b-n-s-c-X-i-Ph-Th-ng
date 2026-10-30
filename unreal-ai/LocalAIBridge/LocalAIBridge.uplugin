@@ -1,0 +1,14 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Local AI Editor Bridge",
+  "Description": "Local MCP companion for editor scene operations. No runtime AI dependency.",
+  "Category": "Editor",
+  "CanContainContent": true,
+  "EnabledByDefault": false,
+  "Plugins": [
+    { "Name": "PythonScriptPlugin", "Enabled": true },
+    { "Name": "EditorScriptingUtilities", "Enabled": true }
+  ]
+}

@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game 3D: Khám Phá Phố Phú Thượng (Tây Hồ, Hà Nội)</title>
+  <link rel="stylesheet" href="style.css?v=20261030-crosswalk-access" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="fps-crosshair" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+  <div id="fps-mouse-hint">Nhấp vào màn hình để điều khiển góc nhìn</div>
+
+  <!-- Top HUD: Player Info, Stats, Quest Tracker & Action Buttons -->
+  <header id="game-hud-top">
+    <div class="player-card">
+      <div class="avatar-circle" aria-hidden="true">PT</div>
+      <div>
+        <div class="player-eyebrow">PHÚ THƯỢNG · TÂY HỒ</div>
+        <div class="player-title" id="player-rank-title">Cư dân mới (Cấp 1)</div>
+        <div class="location-sub" id="hud-location">📍 Đang đứng tại: Số 41 Phố Phú Thượng</div>
+        <div class="player-stats-row">
+          <span class="stat-pill day-pill" id="day-time-pill">🗓️ Ngày 1 · 09:30</span>
+          <span class="stat-pill" id="stat-coins">💰 50.000đ</span>
+          <span class="stat-pill" id="stat-xp">⭐ 0 XP</span>
+          <span class="stat-pill" id="stat-stamina">⚡ 100%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="quest-banner">
+      <div class="quest-top-row">
+        <span class="quest-tag" id="quest-stage-tag">NHIỆM VỤ</span>
+        <span id="quest-text">Thực hiện chuỗi nhiệm vụ & khám phá Phố Phú Thượng (0/5)</span>
+      </div>
+      <div class="quest-sub-hint" id="quest-sub-hint">💡 Gợi ý: Tìm Cô Gánh Xôi ở góc vỉa hè trước cổng trường, hoặc nhặt các Ngôi Sao Di Sản (0/12)!</div>
+      <div class="quest-progress-bar">
+        <div id="quest-fill" style="width: 0%"></div>
+      </div>
+      <div id="street-story-panel">
+        <span class="story-kicker">HOẠT ĐỘNG KHU PHỐ · GÓC SỐ 41</span>
+        <strong id="street-story-title">Khảo sát ngã ba thật</strong>
+        <span id="street-story-progress">0/4</span>
+      </div>
+    </div>
+
+    <div class="hud-actions">
+      <button id="camera-mode-btn" class="hud-btn active" title="Phím V: Chuyển đổi Góc nhìn Thứ 3 (Thấy nhân vật xoay đầu) / Thứ nhất (FPS)">
+        🎥 Góc Nhìn: TPS (V)
+      </button>
+      <button id="journal-btn" class="hud-btn" title="Phím J: Mở Hồ sơ Kịch bản 3 Chương & Dẫn đường GPS">
+        📖 Kịch Bản (J)
+      </button>
+      <button id="inventory-btn" class="hud-btn" title="Phím B hoặc I: Mở Túi Đồ xem chi tiết các vật phẩm đang mang & nơi sử dụng">
+        🎒 Túi Đồ (B)
+      </button>
+      <button id="flashlight-toggle-btn" class="hud-btn" title="Phím T: Bật / tắt Đèn Pin chiếu sáng cá nhân">
+        🔦 Đèn Pin (T)
+      </button>
+      <button id="vehicle-toggle-btn" class="hud-btn" title="Phím F: Lên / Xuống Xe Máy dạo phố">
+        🛵 Lái Xe Máy (F)
+      </button>
+      <button id="shipper-garage-btn" class="hud-btn shipper-highlight-btn" title="G: dùng dịch vụ khi xuống xe tại xưởng hoặc quán. C: nhận đơn ship nhanh ở mọi nơi.">
+        🌟 Hoạt Động & Độ Xe (G)
+      </button>
+      <button id="headlight-toggle-btn" class="hud-btn" title="Phím L: Bật / tắt đèn pha xe máy">
+        💡 Đèn Xe (L)
+      </button>
+      <button id="photo-btn" class="hud-btn" title="Phím P: Chụp ảnh kỷ niệm địa danh Phú Thượng">
+        📸 Chụp Ảnh (P)
+      </button>
+      <button id="end-day-btn" class="hud-btn" title="Tổng kết các việc đã làm trong ngày">
+        🌙 Kết Ngày
+      </button>
+      <button id="story-mode-btn" class="hud-btn horror-btn" title="Bắt đầu cốt truyện Đơn Hàng Số 41">
+        ▶ Cốt Truyện
+      </button>
+      <button id="settings-btn" class="hud-btn" title="Phím O: Mở bảng Cấu hình Đồ họa & Điều khiển">
+        ⚙️ Cấu Hình (O)
+      </button>
+    </div>
+  </header>
+
+  <!-- Inventory / Backpack Bar (Top Right below HUD - Click or press B/I to open full bag) -->
+  <div id="inventory-bar" role="button" tabindex="0" title="Nhấp vào đây hoặc bấm Phím B / I để mở Túi Đồ xem chi tiết vật phẩm">
+    <span class="inv-label">🎒 Túi đồ:</span>
+    <div id="inventory-items">
+      <span class="inv-empty">Chưa có vật phẩm</span>
+    </div>
+    <span class="inv-open-hint">🔍 Xem túi (B)</span>
+  </div>
+  <div id="balance-alert" class="hidden" role="status" aria-live="polite"></div>
+
+  <aside id="community-card" aria-label="Tiến triển khu phố">
+    <div class="community-title"><span>🤝 Uy tín khu phố</span><strong id="community-reputation">0</strong></div>
+    <div class="community-grid">
+      <span>Gắn kết <b id="stat-cohesion">0</b></span>
+      <span>Sạch đẹp <b id="stat-beauty">0</b></span>
+      <span>Sinh kế <b id="stat-livelihood">0</b></span>
+      <span>Di sản <b id="stat-heritage">0</b></span>
+    </div>
+    <div id="save-indicator">Đã lưu tự động</div>
+  </aside>
+
+  <!-- Toast Notification Popup -->
+  <div id="game-toast" class="hidden"></div>
+
+  <div id="horror-atmosphere" aria-hidden="true"></div>
+  <section id="horror-objective" class="hidden" aria-live="polite">
+    <div class="horror-kicker">HỒ SƠ TÂM LINH SỐ 41 · TIẾNG GỌI DƯỚI GIẾNG CỔ</div>
+    <div class="horror-objective-row">
+      <span id="horror-step-count">01/06</span>
+      <strong id="horror-objective-text">Nhận đơn hàng lúc 19:41</strong>
+    </div>
+    <div id="horror-distance-hint" class="horror-distance-hint">Mục tiêu ở gần · quan sát biển số nhà và ánh sáng trong cảnh</div>
+    <div class="story-survival-row">
+      <span>PIN ĐÈN <b id="story-battery">100%</b></span>
+      <span>NHỊP TIM <b id="story-heart">72 BPM · ỔN ĐỊNH</b></span>
+      <span>TIẾNG ĐỘNG <b id="story-noise">THẤP</b></span>
+      <span>VẬT CHỨNG <b id="story-clues">0/3</b></span>
+    </div>
+    <div class="night-threat-row">
+      <span id="night-threat">Chưa có dấu hiệu bất thường</span>
+      <button id="horror-burst-btn" type="button" title="Phím R: Phóng xung ánh sáng mạnh xua tan ảo ảnh & làm choáng Kẻ Bắt Chước (-12% Pin)">⚡ Xung Đèn (R)</button>
+      <button id="night-notebook-btn" type="button">📖 Hồ sơ (J)</button>
+    </div>
+    <div class="horror-progress"><span id="horror-progress-fill"></span></div>
+  </section>
+
+  <div id="story-prologue" class="activity-overlay story-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="story-prologue-title">
+    <section class="activity-card story-prologue-card">
+      <div class="activity-kicker">PHÚ THƯỢNG · 19:41 · ĐÊM MƯA LỊCH SỬ 26/10/2008</div>
+      <h2 id="story-prologue-title">Tiếng Gọi Dưới Giếng Cổ</h2>
+      <p>18 năm trước, trong đêm mưa ngập mất điện toàn Hà Nội, cậu bé <strong>Nguyễn Văn An (7 tuổi)</strong> mặc áo mưa vàng ra đầu Ngõ 41 đón anh trai <strong>Linh</strong> rồi biến mất bên miệng giếng cổ sau <strong>Nhà số 41</strong>. Đêm nay, chiếc máy in đã rút điện trong quán xôi bỗng tự chạy rè rè, in ra hóa đơn mực đỏ đặt đúng phần xôi nếp trắng không hành của An — người nhận: <strong>Nguyễn Văn Linh</strong>.</p>
+      <blockquote>“Thứ đứng dưới giếng cổ Ngõ 41 chuyên nhại giọng người thân để gọi tên con lúc 19:41. Nếu nghe tiếng gọi tên mình sau cánh cửa, tuyệt đối đừng trả lời — hãy dùng <strong>Xung Đèn Pin (Phím R)</strong> để lột trần hình dạng thật của nó!”</blockquote>
+      <div class="story-prologue-meta">
+        <span>⚡ Phím R: Xung Đèn Trừ Tà & Làm Choáng</span>
+        <span>🤫 Phím Q: Nín Thở Hạ Nhịp Tim</span>
+        <span>🔎 3 Vật Chứng · 3 Kết Cục</span>
+      </div>
+      <button class="choice-btn primary" id="story-start-btn">🕯️ Bước Vào Ca Tối Ngõ 41</button>
+      <button class="choice-btn hidden" id="story-new-btn">↻ Chơi Lại Hồ Sơ Số 41 Từ Đầu</button>
+      <button class="activity-cancel" id="story-cancel-btn">Quay lại phố Phú Thượng ban ngày</button>
+    </section>
+  </div>
+
+  <div id="story-dialogue" class="story-dialogue hidden" role="dialog" aria-modal="true" aria-live="polite">
+    <div class="story-dialogue-speaker" id="story-dialogue-speaker">Linh</div>
+    <p id="story-dialogue-text"></p>
+    <button id="story-dialogue-next">Tiếp tục <span>↵</span></button>
+  </div>
+
+  <div id="story-fail" class="activity-overlay story-fail hidden" role="dialog" aria-modal="true">
+    <section class="activity-card story-fail-card">
+      <div class="activity-kicker">19:41 · TIẾNG GỌI ĐÃ BẮT KỊP</div>
+      <h2>Tiếng gọi đã tìm thấy bạn</h2>
+      <p>Thực thể nhìn thấy ánh đèn và nghe tiếng chạy. Rẽ vào ngách, tắt đèn và đi chậm để cắt dấu. Quán xôi là nơi trú an toàn. Giữ <strong>Q</strong> để trấn tĩnh khi đã khuất tầm nhìn.</p>
+      <button class="choice-btn primary" id="story-retry-btn">Trở lại quán · giữ vật chứng đã tìm</button>
+    </section>
+  </div>
+
+  <div id="night-activity" class="activity-overlay night-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="night-title">
+    <section class="activity-card night-card">
+      <div id="night-kicker" class="activity-kicker">CA TỐI · NHÀ 41</div>
+      <h2 id="night-title">Sổ tay ca tối</h2>
+      <div id="night-content"></div>
+      <p id="night-feedback" class="night-feedback" role="status" aria-live="polite"></p>
+      <div id="night-actions" class="night-actions"></div>
+      <button id="night-close" class="activity-cancel">Cất đi · Tiếp tục chơi</button>
+    </section>
+  </div>
+
+  <!-- Interaction Prompt (Press E / F) -->
+  <div id="interact-prompt" class="hidden" role="button" tabindex="0" aria-label="Thực hiện tương tác hiện tại">
+    <span class="key-badge" id="interact-key">E</span>
+    <span id="interact-label">Trò chuyện với Bác Bảo Vệ</span>
+  </div>
+
+  <!-- RPG Dialogue Box (Bottom Center) -->
+  <div id="dialogue-modal" class="hidden">
+    <div class="dialogue-avatar" id="dlg-avatar">👮‍♂️</div>
+    <div class="dialogue-content">
+      <div class="dialogue-header">
+        <h3 id="dlg-speaker">Bác Bảo Vệ Trường THPT Tây Hồ</h3>
+        <span class="dlg-role" id="dlg-role">41 Phố Phú Thượng</span>
+      </div>
+      <p id="dlg-text">
+        Chào cháu! Đây là cổng chính Trường THPT Tây Hồ tại số 41 Phố Phú Thượng...
+      </p>
+      <div class="dialogue-choices" id="dlg-choices"></div>
+    </div>
+  </div>
+
+  <div id="xoi-minigame" class="activity-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="xoi-title">
+    <section class="activity-card">
+      <div class="activity-kicker">TRÒ CHƠI NGẮN · LÀNG NGHỀ PHÚ THƯỢNG</div>
+      <h2 id="xoi-title">🍙 Gói một phần xôi nóng</h2>
+      <p id="xoi-instruction">Chọn loại gạo phù hợp để bắt đầu.</p>
+      <div class="xoi-progress" id="xoi-progress"><span class="active"></span><span></span><span></span></div>
+      <div class="activity-options" id="xoi-options"></div>
+      <div class="activity-meta"><span id="xoi-timer">⏱️ 30 giây</span><span id="xoi-quality">Chất lượng: ★★★</span></div>
+      <button class="activity-cancel" id="xoi-cancel-btn">Để làm sau</button>
+    </section>
+  </div>
+
+  <div id="day-summary" class="activity-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="summary-title">
+    <section class="activity-card summary-card">
+      <div class="activity-kicker">NHẬT KÝ CƯ DÂN</div>
+      <h2 id="summary-title">🌙 Tổng kết ngày</h2>
+      <div id="summary-content"></div>
+      <div class="summary-actions">
+        <button class="choice-btn" id="continue-day-btn">Tiếp tục khám phá</button>
+        <button class="choice-btn primary" id="next-day-btn">Bắt đầu ngày mới</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="horror-choice" class="activity-overlay horror-choice hidden" role="dialog" aria-modal="true" aria-labelledby="horror-choice-title">
+    <section class="activity-card horror-choice-card">
+      <div class="activity-kicker">ĐÊM ĐẦU · ĐẦU NGÕ 41</div>
+      <h2 id="horror-choice-title">Mang sự thật đi đâu?</h2>
+      <p>Trong băng có một người đã đưa An tới Phú Gia. Chưa ai biết cậu bé ở đâu sau đêm ấy. Những vật chứng và cách bạn đối mặt với tiếng gọi quyết định điều có thể làm lúc này.</p>
+      <div class="horror-choice-actions">
+        <button class="choice-btn primary" id="ending-peace-btn">🕯️ Thắp đèn hiên nhà 41 · Đặt lại gói xôi ấm cho An (Kết thúc Trọn Vẹn)</button>
+        <button class="choice-btn" id="ending-truth-btn">📼 Giữ cuộn băng · Lần theo địa chỉ bí ẩn ở Phú Gia</button>
+        <button class="choice-btn" id="ending-safe-btn">🚪 Cất băng ở quán · Về nhà với mẹ</button>
+        <button class="activity-cancel" id="ending-return-btn">Quay vào ngõ · tìm thêm vật chứng</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Interactive Inventory / Backpack Modal (Press B or I) -->
+  <div id="inventory-modal" class="activity-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="inventory-title">
+    <section class="activity-card inventory-card">
+      <div class="settings-header">
+        <div>
+          <div class="activity-kicker">HÀNH TRANG CÁ NHÂN · VẬT PHẨM NHIỆM VỤ & VẬT CHỨNG</div>
+          <h2 id="inventory-title">🎒 Túi Đồ Của Nguyễn Văn Linh</h2>
+        </div>
+        <button id="inventory-close-top" class="settings-icon-close" title="Đóng (ESC / B / I)">✕</button>
+      </div>
+      <div id="inventory-summary-strip" class="inventory-summary-strip"></div>
+      <div class="inv-modal-layout">
+        <div id="inventory-modal-list" class="inv-modal-list"></div>
+        <div id="inventory-modal-detail" class="inv-modal-detail"></div>
+      </div>
+      <div class="summary-actions settings-actions">
+        <button class="choice-btn primary" id="inventory-close-btn">✓ Đóng Túi Đồ (B / I / ESC)</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Live Speedometer, Nitro Boost & Shipper Rush HUD -->
+  <aside id="shipper-hud" class="hidden" aria-live="polite">
+    <div id="shipper-mission-box" class="shipper-mission-box hidden">
+      <div class="shipper-mission-header">
+        <span class="shipper-badge-live" id="shipper-mission-stars">⚡ ĐƠN SIÊU TỐC</span>
+        <strong id="shipper-mission-timer">⏱️ 45.0s</strong>
+      </div>
+      <div class="shipper-mission-title" id="shipper-mission-title">Giao Xôi Xéo Nóng Tới Cổng Làng</div>
+      <div class="shipper-mission-stats">
+        <span id="shipper-cp-progress">📍 Cổng: 1/6</span>
+        <span id="shipper-combo-pill" class="combo-pill">🔥 COMBO x1.0</span>
+        <span id="shipper-cargo-pill">📦 Hàng: 100%</span>
+      </div>
+      <div class="shipper-cp-hint" id="shipper-next-hint">👉 Đi theo vòng sáng Neon xanh phía trước (+5s mỗi cổng)</div>
+      <button type="button" id="shipper-abort-btn" class="shipper-abort-btn" title="Hủy đơn đang giao">✕ Hủy đơn</button>
+    </div>
+
+    <div id="shipper-stunt-banner" class="shipper-stunt-banner hidden">⚡ LÁCH XE SIÊU ĐẲNG! +2.500đ · COMBO TĂNG!</div>
+
+    <div class="speedometer-card">
+      <div class="speedo-main">
+        <div class="speedo-value-wrap">
+          <span id="speedo-kmh">00</span>
+          <small>KM/H</small>
+        </div>
+        <div class="speedo-bike-info">
+          <strong id="speedo-bike-name">🛵 Honda Wave Đỏ</strong>
+          <span id="speedo-gear-hint">[Space]: Phanh · [Shift]: Nitro</span>
+          <span id="speedo-brake-status">Space: phanh · Y: dẫn đường · Tab: chuột</span>
+        </div>
+      </div>
+      <div class="nitro-bar-row">
+        <span class="nitro-label">🔥 NITRO</span>
+        <div class="nitro-bar-track">
+          <div id="nitro-bar-fill" style="width: 100%"></div>
+        </div>
+        <strong id="nitro-val">100%</strong>
+      </div>
+      <div class="speedo-quick-actions">
+        <button type="button" id="speedo-quick-order-btn" title="Phím C: Nhận ngay 1 đơn Shipper Siêu Tốc không cần mở bảng">⚡ Nhận Đơn Nhanh (C)</button>
+        <button type="button" id="speedo-open-garage-btn" title="Tới xưởng và bấm F xuống xe trước khi sửa hoặc độ xe">🔧 Tới Xưởng Độ Xe (G)</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Live Street Random Event Alert Banner -->
+  <div id="street-event-banner" class="street-event-banner hidden" role="status" aria-live="polite">
+    <div class="street-event-info">
+      <span class="street-event-tag">🚨 SỰ KIỆN ĐƯỜNG PHỐ KHẨN CẤP</span>
+      <strong id="street-event-title">🏃‍♂️ Truy đuổi kẻ móc túi trên phố!</strong>
+      <small id="street-event-desc">Cách bạn 28m · Còn 45s · Thưởng +45.000đ</small>
+    </div>
+    <div class="street-event-actions">
+      <button type="button" id="street-event-guide-btn" title="Bấm Y để dẫn đường ngay cả khi đang lái">🧭 Dẫn đường (Y)</button>
+    </div>
+  </div>
+
+  <!-- Interactive Park & Street Mini-Games Modal (Fishing 3D, Jianzi Kick, Street Tycoon Rush) -->
+  <div id="park-minigame-modal" class="activity-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="park-mg-title">
+    <section class="activity-card park-mg-card">
+      <div class="settings-header">
+        <div>
+          <div class="activity-kicker" id="park-mg-kicker">MINI-GAME TƯƠNG TÁC 3D · PHÚ THƯỢNG</div>
+          <h2 id="park-mg-title">🎣 Câu Cá Hồ Sen Tây Hồ</h2>
+        </div>
+        <button id="park-mg-close-top" class="settings-icon-close" title="Đóng (ESC)">✕</button>
+      </div>
+      <div id="park-mg-body" class="park-mg-body"></div>
+      <div class="summary-actions settings-actions">
+        <button class="choice-btn" id="park-mg-close-btn">✓ Nghỉ Chơi & Quay Lại Phố (ESC)</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Interactive Shipper Rush, Garage, Business, Pets/Outfits & Achievements Hub Modal (Press G) -->
+  <div id="shipper-modal" class="activity-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="shipper-modal-title">
+    <section class="activity-card shipper-garage-card">
+      <div class="settings-header">
+        <div>
+          <div class="activity-kicker">TRUNG TÂM MỞ RỘNG THẾ GIỚI · SHIPPER · ĐỘ XE · QUÁN XÔI · THÚ CƯNG · CÂU CÁ</div>
+          <h2 id="shipper-modal-title">🌟 Trung Tâm Giải Trí, Độ Xe & Kinh Doanh Phú Thượng 3D</h2>
+        </div>
+        <button id="shipper-close-top" class="settings-icon-close" title="Đóng (ESC / G)">✕</button>
+      </div>
+
+      <div id="shipper-summary-strip" class="inventory-summary-strip"></div>
+
+      <div class="shipper-tabs">
+        <button type="button" id="tab-btn-orders" class="shipper-tab-btn active">⚡ Đua Shipper (5 Tuyến)</button>
+        <button type="button" id="tab-btn-garage" class="shipper-tab-btn">🔧 Xưởng Độ Xe 3D</button>
+        <button type="button" id="tab-btn-business" class="shipper-tab-btn">🍙 Mở Quán & Sự Kiện</button>
+        <button type="button" id="tab-btn-style" class="shipper-tab-btn">🐕 Thú Cưng & Đồ Hiệu</button>
+        <button type="button" id="tab-btn-trophies" class="shipper-tab-btn">🏆 Cúp Kỷ Lục</button>
+      </div>
+
+      <div id="shipper-tab-orders" class="shipper-tab-panel">
+        <p class="shipper-intro">
+          Chọn tuyến tại trạm hoặc bấm C nhận đơn nhanh khi đang lái. Đi qua checkpoint để được cộng giây; <strong>Space: phanh</strong>, <strong>Shift: nitro</strong>. Xuống xe tại xưởng để sửa và độ xe.
+        </p>
+        <div id="shipper-orders-list" class="shipper-orders-grid"></div>
+      </div>
+
+      <div id="shipper-tab-garage" class="shipper-tab-panel hidden">
+        <div class="garage-split-layout">
+          <div class="garage-column">
+            <h3 class="garage-sec-title">🏍️ BỘ SƯU TẬP 4 DÒNG XE HUYỀN THOẠI</h3>
+            <div id="garage-bikes-list" class="garage-list"></div>
+          </div>
+          <div class="garage-column">
+            <h3 class="garage-sec-title">🔩 NÂNG CẤP PHỤ TÙNG 3D TRÊN XE</h3>
+            <div id="garage-upgrades-list" class="garage-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="shipper-tab-business" class="shipper-tab-panel hidden">
+        <div class="garage-split-layout">
+          <div class="garage-column">
+            <h3 class="garage-sec-title">🏮 QUÁN XÔI & TRÀ ĐÁ TỰ QUẢN CỦA BẠN (THU NHẬP THỤ ĐỘNG)</h3>
+            <div id="business-stall-panel" class="garage-list"></div>
+          </div>
+          <div class="garage-column">
+            <h3 class="garage-sec-title">🚨 SỰ KIỆN ĐƯỜNG PHỐ & MINI-GAME HỒ SEN 3D</h3>
+            <div id="business-events-panel" class="garage-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="shipper-tab-style" class="shipper-tab-panel hidden">
+        <div class="garage-split-layout">
+          <div class="garage-column">
+            <h3 class="garage-sec-title">🐕 THÚ CƯNG 3D ĐI THEO CHÂN BẠN KHẮP PHỐ</h3>
+            <div id="style-pets-list" class="garage-list"></div>
+          </div>
+          <div class="garage-column">
+            <h3 class="garage-sec-title">👕 TRANG PHỤC & PHỤ KIỆN MŨ 3D TRÊN NHÂN VẬT</h3>
+            <div id="style-outfits-list" class="garage-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="shipper-tab-trophies" class="shipper-tab-panel hidden">
+        <p class="shipper-intro">
+          Hoàn thành các thử thách đường phố Phú Thượng để mở khóa <strong>Cúp Danh Hiệu</strong> và nhận tiền thưởng nóng!
+        </p>
+        <div id="trophies-grid-list" class="shipper-orders-grid"></div>
+      </div>
+
+      <div class="summary-actions settings-actions">
+        <button class="choice-btn" id="shipper-guide-station-btn">🧭 Dẫn Đường Tới Xưởng Độ Xe Ngoài Phố</button>
+        <button class="choice-btn primary" id="shipper-close-btn">✓ Đóng Bảng (G / ESC)</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Storyline & 3-Act Script Journal Modal (Press J) -->
+  <div id="journal-modal" class="activity-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="journal-title">
+    <section class="activity-card journal-card">
+      <div class="settings-header">
+        <div>
+          <div class="activity-kicker">HỒ SƠ KỊCH BẢN & DẪN ĐƯỜNG · PHỐ PHÚ THƯỢNG 3D</div>
+      <h2 id="journal-title">📖 Nhật Ký Phú Thượng</h2>
+        </div>
+        <button id="journal-close-top" class="settings-icon-close" title="Đóng (ESC / J)">✕</button>
+      </div>
+      <p class="journal-intro">
+        Trong vai <strong>Nguyễn Văn Linh</strong> – một người con trẻ trở về phố Phú Thượng (Tây Hồ, Hà Nội), bạn vừa gìn giữ nhịp sống di sản làng nghề Xôi Phú Thượng ban ngày, vừa từng bước mở khóa bí mật gia đình tại <strong>Ngõ 41</strong> khi màn đêm buông xuống.
+      </p>
+      <div id="journal-chapters" class="journal-chapters"></div>
+      <div class="summary-actions settings-actions">
+        <button class="choice-btn" id="journal-guide-btn">🧭 Bật Dẫn Đường GPS tới Mục tiêu gần nhất</button>
+        <button class="choice-btn primary" id="journal-close-btn">✓ Đóng Hồ Sơ (J / ESC)</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Graphics & Game Configuration Modal (Press O) -->
+  <div id="settings-modal" class="activity-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <section class="activity-card settings-card">
+      <div class="settings-header">
+        <div>
+          <div class="activity-kicker">TÙY CHỈNH HỆ THỐNG · PHỐ PHÚ THƯỢNG 3D</div>
+          <h2 id="settings-title">⚙️ Cấu Hình Đồ Họa, Camera & Điều Khiển</h2>
+        </div>
+        <button id="settings-close-top" class="settings-icon-close" title="Đóng (ESC / O)">✕</button>
+      </div>
+
+      <div class="settings-grid">
+        <div class="setting-row"><div class="setting-info"><strong>🌦 Thời tiết khu phố</strong><small>Tự đổi theo giờ trong game; mưa và gió chuyển dần, không đổi giật đột ngột.</small></div><select id="setting-weather" aria-label="Thời tiết" class="setting-select"><option value="auto">Tự động</option><option value="clear">Trời quang</option><option value="cloud">Nhiều mây</option><option value="rain">Mưa</option><option value="wind">Gió mạnh</option></select></div>
+        <div class="setting-row"><div class="setting-info"><strong>🕘 Giờ trong ngày: <span id="val-citytime">09:30</span></strong><small>Đèn phố tự bật buổi tối. Chế độ cốt truyện dùng ánh sáng riêng.</small></div><input id="setting-citytime" aria-label="Giờ trong ngày" type="range" min="0" max="23.9" step="0.1" value="9.5" /></div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>🎥 Chế độ Góc nhìn Camera (Phím V)</strong>
+            <small>Thứ 3 (TPS) giúp thấy rõ nhân vật xoay đầu & nghiêng người khi rẽ; Thứ nhất (FPS) nhập vai chân thực</small>
+          </div>
+          <select id="setting-cammode" class="setting-select">
+            <option value="tps">Góc nhìn Thứ 3 (TPS - Thấy nhân vật)</option>
+            <option value="fps">Góc nhìn Thứ nhất (FPS - Nhập vai)</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>🔄 Tự động xoay đầu & góc nhìn khi rẽ (A / D)</strong>
+            <small>Khi bấm A/D rẽ trái/phải (cả đi bộ lẫn lái xe máy), đầu nhân vật và camera tự xoay mượt theo hướng rẽ</small>
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="setting-autoturn" checked />
+            <span>Đang bật</span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>🧭 Tốc độ xoay đầu theo hướng rẽ: <span id="val-turnspeed">100%</span></strong>
+            <small>Độ nhạy tự động quay đầu và dẫn hướng góc nhìn khi vào cua bằng phím A / D</small>
+          </div>
+          <input type="range" id="setting-turnspeed" min="0.3" max="1.8" step="0.05" value="1.0" />
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>🌊 Độ mượt chuyển động Đầu & Camera: <span id="val-smoothness">100%</span></strong>
+            <small>Nội suy lò xo giảm giật khi xoay chuột, chuyển hướng và nghiêng đầu vào cua</small>
+          </div>
+          <input type="range" id="setting-smoothness" min="0.5" max="1.6" step="0.05" value="1.0" />
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>🎨 Chất lượng đồ họa (Preset)</strong>
+            <small>Điều chỉnh độ phân giải, đổ bóng, lá thu Hà Nội rơi, sương mù & ánh sáng đèn phố</small>
+          </div>
+          <select id="setting-preset" class="setting-select">
+            <option value="low">Thấp (Tối ưu FPS mượt)</option>
+            <option value="performance">Ưu tiên tốc độ (bóng nhẹ · tắt bloom)</option>
+            <option value="medium">Trung bình (Cân bằng)</option>
+            <option value="high">Cao (Sắc nét)</option>
+            <option value="ultra">Siêu Thực (Ultra · Lá thu & Ánh sáng Điện ảnh)</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>🔆 Độ sáng màn hình & Ban đêm: <span id="val-brightness">115%</span></strong>
+            <small>Tăng độ sáng cảnh đêm và ngõ hẻm để dễ tìm số nhà</small>
+          </div>
+          <input type="range" id="setting-brightness" min="0.7" max="1.6" step="0.05" value="1.15" />
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>🔦 Cường độ Đèn Pin (Phím T): <span id="val-flashlight">110%</span></strong>
+            <small>Độ mạnh & tầm chiếu xa của đèn pin cầm tay</small>
+          </div>
+          <input type="range" id="setting-flashlight" min="0.5" max="1.8" step="0.05" value="1.1" />
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>👁️ Tầm nhìn rộng (FOV): <span id="val-fov">65°</span></strong>
+            <small>Góc mở ống kính camera (rộng hơn giúp quan sát toàn cảnh ngõ phố)</small>
+          </div>
+          <input type="range" id="setting-fov" min="50" max="95" step="1" value="65" />
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>🖱️ Độ nhạy chuột: <span id="val-sensitivity">100%</span></strong>
+            <small>Tốc độ xoay camera khi di chuyển chuột</small>
+          </div>
+          <input type="range" id="setting-sensitivity" min="0.3" max="2.2" step="0.05" value="1.0" />
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>📍 Hiển thị Cọc sáng mục tiêu & Đường dẫn GPS</strong>
+            <small>Hiển thị cột sáng 3D, mũi tên dẫn đường dưới chân và định vị mục tiêu trên bản đồ</small>
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="setting-waypoints" checked />
+            <span>Đang bật</span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>🌑 Bóng đổ thời gian thực (Real-time Shadows)</strong>
+            <small>Tắt nếu máy yếu để tăng tốc độ khung hình</small>
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="setting-shadows" checked />
+            <span>Đang bật</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="summary-actions settings-actions">
+        <button class="choice-btn" id="settings-reset-btn">🔄 Khôi phục mặc định</button>
+        <button class="choice-btn primary" id="settings-save-btn">✓ Lưu & Đóng (O / ESC)</button>
+      </div>
+      <p id="performance-readout" class="performance-readout" aria-live="off">Đang lấy mẫu tốc độ khung hình…</p>
+    </section>
+  </div>
+
+  <!-- Mini-map Radar (Bottom Right) -->
+  <div id="minimap-container">
+    <div class="minimap-title">🧭 Bản Đồ Khu Phố Phú Thượng</div>
+    <canvas id="minimap" width="230" height="175"></canvas>
+  </div>
+
+  <div id="character-status">
+    <span class="status-dot"></span><span id="motion-label">Đi bộ dạo phố</span>
+    <span class="status-divider"></span><span>⭐ Di sản: <strong id="relic-counter">0/12</strong></span>
+    <span class="status-divider"></span><span>📸 Ảnh: <strong id="photo-counter">0/8</strong></span>
+  </div>
+
+  <!-- Controls Footer -->
+  <footer id="controls-bar">
+    <span id="control-move">🎮 <strong>W, A, S, D:</strong> Di chuyển</span>
+    <span>•</span>
+    <span><strong>Phím V:</strong> Đổi Góc Nhìn (TPS/FPS)</span>
+    <span>•</span>
+    <span><strong>Phím B:</strong> Túi Đồ</span>
+    <span>•</span>
+    <span><strong>Phím J:</strong> Kịch Bản</span>
+    <span>•</span>
+    <span id="control-shift"><strong>Shift:</strong> Chạy nhanh</span>
+    <span>•</span>
+    <span id="control-space"><strong>Space:</strong> Nhảy / Phanh xe</span>
+    <span>•</span>
+    <span><strong>Phím E:</strong> Tương tác</span>
+    <span>•</span>
+    <span><strong>Phím T:</strong> Đèn Pin</span>
+    <span>•</span>
+    <span><strong>Phím Q:</strong> Trấn tĩnh</span>
+    <span>•</span>
+    <span><strong>Phím F:</strong> Xe Máy</span>
+    <span>•</span>
+    <span><strong>Phím G:</strong> Shipper & Độ Xe</span>
+    <span>•</span>
+    <span><strong>K:</strong> Báo trộm · <strong>Y:</strong> Dẫn đường sự kiện · <strong>Tab:</strong> Dừng xe / thả chuột</span>
+    <span>•</span>
+    <span><strong>Phím O:</strong> Cấu hình</span>
+  </footer>
+
+  <script type="module" src="app.js?v=20261030-crosswalk-access"></script>
+</body>
+</html>
+

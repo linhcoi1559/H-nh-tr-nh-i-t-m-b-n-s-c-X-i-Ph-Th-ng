@@ -1,0 +1,64 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Kiểm thử Tiệm Giải Trí 41</title>
+<style>body{margin:0;min-width:1200px;background:#12201d;color:#eee6d5;font:14px system-ui}header{padding:12px;display:flex;gap:14px}button{padding:9px}#results{white-space:pre-line;padding:12px}iframe{width:1200px;height:680px;border:0}body.preview header{padding:3px}body.preview #results{display:none}</style>
+<header><button id="load">Mở phiên riêng</button><button id="run" disabled>Chơi thử ba bàn</button><button id="preview">Ẩn kết quả kiểm thử</button><button id="restore" disabled>Khôi phục save</button><span id="status">127.0.0.1 · dữ liệu thử riêng</span></header><div id="results"></div><iframe title="Tiệm giải trí"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot,parseSnapshot} from '../gameplay-state.mjs';
+import {startHoldem,holdemAction} from '../arcade-state.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),results=document.querySelector('#results');let backup;
+const keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'];
+const sample=document.createElement('button');sample.textContent='So bài ván lưu cũ';document.querySelector('header').append(sample);
+const doc=()=>frame.contentDocument,wait=ms=>new Promise(r=>setTimeout(r,ms)),pos=()=>doc().querySelector('#interact-prompt').dataset.playerPosition.split(',').map(Number);
+async function until(fn){const deadline=performance.now()+25000;while(!fn()){if(performance.now()>deadline)throw Error('Hết thời gian chờ');await wait(50);}}
+function key(code,down=true){frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(down?'keydown':'keyup',{code,bubbles:true}));}function tap(code){key(code);key(code,false);}
+function click(text){const b=[...doc().querySelectorAll('#arcade-modal button')].find(b=>b.textContent===text);if(!b||b.disabled)throw Error('Không có nút hoạt động: '+text);b.click();}
+function check(value,label){if(!value)throw Error(label);results.textContent+='✓ '+label+'\n';}
+const saved=()=>parseSnapshot(localStorage.getItem(SAVE_KEY));
+sample.onclick=async()=>{
+  if(!backup){status.textContent='Mở phiên riêng trước';return;}
+  frame.src='about:blank';await wait(500);
+  const prefix=[9,1,10,21,28,11,3,34,4,0,33,43,5,51,6,7],deck=[...prefix,...Array.from({length:52},(_,i)=>i).filter(c=>!prefix.includes(c))];
+  let s=startHoldem(undefined,100,deck),steps=0;
+  while(s.pending&&steps++<100){const p=s.pending;s=holdemAction(s,p.actor===0?(p.players[0].stack>0?'raise':'call'):'tick',100,()=>.99);}
+  s.last.message='Anh Tuấn nhận pot · Một đôi.';
+  localStorage.setItem(SAVE_KEY,encodeSnapshot({coins:55555,arcade:s,playerPosition:{x:-40.6,z:18.1},camYaw:0}));frame.src='../index.html?playtest=1';await until(()=>doc()?.querySelector('#arcade-modal'));await until(()=>doc()?.querySelector('#interact-prompt')?.dataset.playerPosition);tap('KeyE');
+  check(doc().querySelector('.texas-settlement').textContent.includes('Hai đôi 10 và 9'),'Ván lưu cũ được giải thích lại thành hai đôi đúng');status.textContent='PASS · kết quả ván lưu cũ, đúng bộ thắng';
+};
+async function walkZ(target){let held;const deadline=performance.now()+12000;try{while(Math.abs(pos()[1]-target)>.2){if(performance.now()>deadline)throw Error('Bị chặn ở '+pos());const code=pos()[1]<target?'KeyW':'KeyS';if(code!==held){if(held)key(held,false);key(code);held=code;}await wait(30);}}finally{if(held)key(held,false);}await wait(250);}
+document.querySelector('#load').onclick=async()=>{try{
+  backup=keys.map(k=>[k,localStorage.getItem(k)]);localStorage.setItem(SAVE_KEY,encodeSnapshot({coins:55555,day:1,playerPosition:{x:-40.6,z:11.7},camYaw:0}));
+  localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',autoTurnHead:false,brightness:1,showWaypoints:false}));
+  frame.src='../index.html?playtest=1';await until(()=>doc()?.querySelector('#arcade-modal'));await until(()=>doc()?.querySelector('#interact-prompt')?.dataset.playerPosition);
+  document.querySelector('#load').disabled=true;document.querySelector('#run').disabled=false;document.querySelector('#restore').disabled=false;status.textContent='Sẵn sàng · trước cửa tiệm';
+}catch(e){status.textContent=e.message;document.querySelector('#restore').disabled=!backup;}};
+document.querySelector('#run').onclick=async()=>{document.querySelector('#run').disabled=true;try{
+  tap('KeyE');check(doc().querySelector('#arcade-modal').hidden,'Cửa tiệm không mở màn chọn trò');
+  await walkZ(15);check(pos()[1]>14.7,'Đi xuyên cửa mở vào được nội thất, không bị collider nhà cũ chắn');tap('KeyE');
+  check(!doc().querySelector('#arcade-modal').hidden,'E tại bàn mở trực tiếp Blackjack');check(!doc().querySelector('#arcade-modal nav'),'Không có menu chuyển trò trong bàn');check(doc().querySelector('#arcade-wallet').textContent.includes('300'),'Có 300 xu chào tiệm');
+  click('Chia bài Blackjack');check(saved().arcade.tokens<=300,'Chia bài trừ xu cược');
+  if(saved().arcade.pending){check(doc().querySelector('[aria-label="Lá úp"]'),'Lá thứ hai nhà cái úp kín');click('Dừng bài');}
+  await until(()=>!saved().arcade.pending);check(saved().arcade.rounds===1,'Blackjack kết thúc một ván');check(saved().coins===55555,'Không trừ tiền sinh hoạt');
+  await until(()=>!saved().arcade.pending);tap('Escape');await walkZ(18.1);tap('KeyE');check(doc().querySelector('#arcade-title').textContent==='Bàn Texas Hold’em','Đi tới bàn Texas chỉ mở Texas');click('Chia bài Texas Hold’em');
+  let pace=doc().querySelector('#holdem-pace');pace.value='calm';pace.dispatchEvent(new frame.contentWindow.Event('change',{bubbles:true}));
+  if(saved().arcade.pending.actor===0)[...doc().querySelectorAll('.holdem-controls button')].find(b=>/^(Theo |Check)/.test(b.textContent)).click();
+  click('Ⅱ Tạm dừng');const pausedHand=JSON.stringify(saved().arcade.pending);await wait(3000);check(JSON.stringify(saved().arcade.pending)===pausedHand,'Tạm dừng không đổi bài, chip hoặc lượt máy');
+  click('▶ Tiếp tục');pace=doc().querySelector('#holdem-pace');pace.value='step';pace.dispatchEvent(new frame.contentWindow.Event('change',{bubbles:true}));const pending=saved().arcade.pending;const tokenBalance=saved().arcade.tokens;
+  tap('Escape');tap('KeyE');check(saved().arcade.tokens===tokenBalance,'Đóng/mở bàn không trừ thêm cược');
+  check(doc().querySelectorAll('.holdem-seat').length===4,'Bàn Texas có bạn và ba máy, bài máy úp kín');
+  tap('Escape');frame.contentWindow.location.reload();await wait(500);await until(()=>doc()?.querySelector('#arcade-modal'));await until(()=>doc()?.querySelector('#interact-prompt')?.dataset.playerPosition);tap('KeyE');
+  check(JSON.stringify(saved().arcade.pending.deck)===JSON.stringify(pending.deck),'Tải lại giữ đúng bộ bài và phần chip đã mang vào');
+  check(saved().arcade.presentation.pace==='step','Nhịp chơi từng bước được lưu khi tải lại');
+  let turns=0,checkedConfirm=false;while(saved().arcade.pending&&turns++<130){const hand=saved().arcade.pending;if(hand.actor===0){
+    const allin=doc().querySelector('.allin-action');if(allin&&!checkedConfirm){const before=JSON.stringify(saved().arcade.pending);allin.click();check(JSON.stringify(saved().arcade.pending)===before,'Bấm all-in một lần chưa chuyển chip');click('Hủy');check(JSON.stringify(saved().arcade.pending)===before,'Hủy all-in giữ nguyên bài và chip');checkedConfirm=true;}
+    const action=[...doc().querySelectorAll('.holdem-controls button')].find(b=>/^(Theo |Check)/.test(b.textContent));if(!action)throw Error('Thiếu nút check/call');action.click();const confirm=[...doc().querySelectorAll('.allin-confirm button')].find(b=>b.textContent==='Xác nhận all-in');confirm?.click();}else{const step=doc().querySelector('.step-action');if(!step)throw Error('Thiếu nút xem từng lượt');step.click();}await wait(120);}
+  check(saved().arcade.rounds===2&&!saved().arcade.pending,'Texas chạy đủ vòng cược với máy và trả chip cuối ván');
+  check(doc().querySelectorAll('.settlement-money>div').length===4,'Kết quả có đủ mang vào, đã cược, pot và trả về ví');
+  check(doc().querySelector('.arcade-ledger summary').textContent.includes('1 ván'),'Sổ bàn Texas chỉ ghi ván đã kết thúc');
+  tap('Escape');await walkZ(22);tap('KeyE');check(doc().querySelector('#arcade-title').textContent==='Bàn vòng quay','Đi tới bàn vòng quay chỉ mở vòng quay');const before=saved().arcade.tokens;click('Quay · 10 xu');const wheel=saved().arcade.pending;
+  check(wheel.game==='wheel'&&saved().arcade.tokens===before-10,'Quay trừ đúng 10 xu và lưu sẵn ô kết quả');
+  tap('Escape');await wait(200);tap('KeyE');check(saved().arcade.pending.index===wheel.index,'Rời bàn không đổi ô trúng');await wait(3500);
+  check(saved().arcade.rounds===3&&!saved().arcade.pending,'Hoạt ảnh quay kết thúc và trả thưởng');check(saved().arcade.last.index===wheel.index,'Kết quả khớp ô quay đã lưu');
+  check(saved().coins===55555,'Cả ba trò giữ nguyên tiền sinh hoạt');status.textContent='PASS · cửa tiệm + Blackjack + Poker + vòng quay + lưu/tải lại';
+}catch(e){status.textContent='FAIL · '+e.message;results.textContent+='✗ '+e.message;}};
+document.querySelector('#preview').onclick=()=>document.body.classList.add('preview');
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(500);backup?.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));backup=null;document.querySelector('#restore').disabled=true;status.textContent='Đã khôi phục dữ liệu riêng.';};
+</script></html>

@@ -1,0 +1,35 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Kiểm tra cư dân, xe và tuyến bưu kiện</title>
+<style>body{margin:0;background:#172721;color:#eee;font:13px system-ui}header{display:flex;gap:8px;flex-wrap:wrap;padding:8px}button{padding:8px}iframe{width:1200px;height:600px;border:0;display:block}#result{white-space:pre-line}</style>
+<header><button id="route">Kiểm tra tuyến bưu kiện</button><button id="street">Phố và giao thông</button><button id="recipient">Cư dân Phú Gia</button><button id="hide">Ẩn/hiện HUD</button><button id="restore" disabled>Khôi phục save</button><span id="status">Phiên riêng 127.0.0.1</span></header><div id="result"></div><iframe title="Kiểm tra cư dân"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot,parseSnapshot}from'../gameplay-state.mjs';
+import {acceptDayJob,dayOffers}from'../daylife-state.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),result=document.querySelector('#result'),keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'];let backup;
+const wait=ms=>new Promise(r=>setTimeout(r,ms)),doc=()=>frame.contentDocument;
+const tap=code=>{for(const type of ['keydown','keyup'])frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(type,{code,bubbles:true}));};
+function check(ok,message){if(!ok)throw Error(message);result.textContent+='✓ '+message+'\n';}
+function backupOnce(){if(!backup)backup=keys.map(k=>[k,localStorage.getItem(k)]);document.querySelector('#restore').disabled=false;}
+async function load(snapshot){backupOnce();frame.src='about:blank';await wait(500);localStorage.setItem(SAVE_KEY,encodeSnapshot(snapshot));localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',shadows:true,showWaypoints:false}));frame.src='../index.html?playtest=1';const until=performance.now()+45000;while(!doc()?.querySelector('#interact-prompt')?.dataset.charactersReady){if(performance.now()>until)throw Error('Game chưa sẵn sàng');await wait(100);}await wait(300);}
+const click=label=>{const b=[...doc().querySelectorAll('#daylife-modal button')].find(b=>b.textContent===label);if(!b)throw Error('Thiếu nút '+label);b.click();};
+async function save(){tap('KeyN');await wait(100);tap('Escape');await wait(700);return parseSnapshot(localStorage.getItem(SAVE_KEY));}
+document.querySelector('#route').onclick=async()=>{try{
+ result.textContent='';status.textContent='Đang kiểm tra tuyến và lưu tiến độ';
+ let snapshot={coins:50000,day:1,playerPosition:{x:-10.5,z:6.8},daylife:acceptDayJob({},'courier',1)};
+ await load(snapshot);tap('KeyE');await wait(100);check(doc().querySelector('#daylife-title').textContent.includes('Sổ giao'),'Mở sổ nhận hàng tại điểm xuất phát');click('Nhận đủ ba kiện · bắt đầu tuyến');
+ snapshot=await save();check(snapshot.daylife.active.done.includes('pickup'),'Nhận bưu kiện được lưu');
+ const offer=dayOffers(1).find(o=>o.id==='courier');
+ for(const id of ['parcel2','parcel0','parcel1']){
+   const g=offer.goals.find(g=>g.id===id);snapshot.playerPosition={x:g.x-.65,z:g.z+.5};snapshot.camYaw=Math.PI/2;await load(snapshot);tap('KeyE');await wait(150);
+   check(doc().querySelector('#daylife-title').textContent===g.address,'Mở ký nhận '+g.recipient);
+   if(id==='parcel2'){click('Giao cho Cô Liên');check(doc().querySelector('#daylife-modal').textContent.includes('Sai người nhận'),'Sai người có phản hồi, được sửa');}
+   click('Giao cho '+g.recipient);snapshot=await save();check(snapshot.daylife.active.done.includes(id),'Lưu và nạp lại '+id);
+ }
+ snapshot.playerPosition={x:-10.5,z:6.8};await load(snapshot);tap('KeyE');await wait(100);check(doc().querySelector('#daylife-title').textContent.includes('chọn phần thưởng'),'Đủ ba chữ ký mới bàn giao sổ và nhận thưởng');
+ const reward=[...doc().querySelectorAll('#daylife-modal button')].find(b=>b.textContent.startsWith('Giữ đủ thù lao'));reward.click();snapshot=await save();check(snapshot.daylife.completed.includes('courier')&&snapshot.coins>50000,'Hoàn tất tuyến, nhận tiền và lưu hoàn thành');
+ status.textContent='PASS · nhận hàng, sai người/sửa, ba điểm bất kỳ, reload, trả sổ, thưởng';
+ }catch(e){status.textContent='FAIL '+e.message;result.textContent+='✗ '+e.message;}};
+document.querySelector('#street').onclick=async()=>{await load({coins:50000,playerPosition:{x:4,z:2},camYaw:0});status.textContent='Phố và giao thông';};
+document.querySelector('#recipient').onclick=async()=>{await load({coins:50000,playerPosition:{x:46,z:-93},camYaw:2.35});status.textContent='Cư dân và biển địa chỉ Phú Gia';};
+document.querySelector('#hide').onclick=()=>{const d=doc();let style=d.querySelector('#review');if(style){style.remove();return;}style=d.createElement('style');style.id='review';style.textContent='#game-hud-top,#inventory-bar,#community-card,#controls-bar,#character-status,#minimap-container,#daylife-button,#arcade-guide,#district-guide,#street-event-banner,#toast,#pointer-lock-hint{display:none!important}';d.head.append(style);};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(600);backup?.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));status.textContent='Đã khôi phục save';};
+</script></html>

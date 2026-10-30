@@ -1,0 +1,27 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Kiểm tra xưởng, phanh và lối tưởng niệm</title>
+<style>body{margin:0;background:#15241e;color:#eee;font:13px system-ui}header{padding:8px;display:flex;gap:8px}button{padding:9px}iframe{width:1200px;height:720px;border:0}#result{white-space:pre-line;padding:8px}</style>
+<header><button id="run">Thử xưởng, đơn nhanh và Space</button><button id="memorial">Đi bộ vào khu tưởng niệm</button><button id="restore" disabled>Khôi phục save</button></header><div id="result">Phiên riêng 127.0.0.1.</div><iframe title="Kiểm tra luật tương tác"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot}from'../gameplay-state.mjs';
+const frame=document.querySelector('iframe'),result=document.querySelector('#result'),keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3','phu_thuong_shipper_garage_v1'];let backup;
+const wait=ms=>new Promise(r=>setTimeout(r,ms)),doc=()=>frame.contentDocument,diag=()=>doc()?.querySelector('#interact-prompt');
+const fire=(code,type)=>frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(type,{code,bubbles:true}));const tap=code=>{fire(code,'keydown');fire(code,'keyup');};
+const check=(ok,label)=>{if(!ok)throw Error(label);result.textContent+='✓ '+label+'\n';};
+async function load(x,z,yaw=0){if(location.hostname!=='127.0.0.1')throw Error('Dùng 127.0.0.1');backup??=keys.map(k=>[k,localStorage.getItem(k)]);document.querySelector('#restore').disabled=false;frame.src='about:blank';await wait(300);localStorage.setItem(SAVE_KEY,encodeSnapshot({coins:1000000,playerPosition:{x,z},camYaw:yaw}));localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',autoTurnHead:false,brightness:1,showWaypoints:false}));localStorage.removeItem(keys[3]);frame.src='../index.html?playtest=1';const until=performance.now()+45000;while(!diag()?.dataset.charactersReady){if(performance.now()>until)throw Error('Game chưa sẵn sàng');await wait(100);}await wait(300);}
+const riding=()=>JSON.parse(diag().dataset.rideState),modal=()=>!doc().querySelector('#shipper-modal').classList.contains('hidden');
+document.querySelector('#run').onclick=async()=>{try{
+ result.textContent='';await load(4,2);tap('KeyG');check(!modal(),'G ngoài xưởng không mở dịch vụ');tap('KeyF');await wait(200);tap('KeyG');check(!modal(),'Đang trên xe không mở xưởng');tap('KeyC');await wait(250);check(riding().riding&&!doc().querySelector('#shipper-mission-box').classList.contains('hidden'),'C vẫn nhận đơn ship nhanh khi đang lái');
+ fire('KeyW','keydown');fire('ShiftLeft','keydown');await wait(650);const speed=riding().speed;check(speed>2,'Xe có tốc độ trước khi phanh');fire('Space','keydown');await wait(100);check(!riding().nitro&&riding().speed<speed,'Space ngắt nitro và giảm tốc dù vẫn giữ W + Shift');const stopDeadline=performance.now()+4000;while(Math.abs(riding().speed)>=.1&&performance.now()<stopDeadline)await wait(50);check(Math.abs(riding().speed)<.1,'Space phanh về 0, không tự lùi hoặc tăng ga');
+ for(const code of ['KeyW','ShiftLeft','Space'])fire(code,'keyup');
+ await load(18.5,-4.8);tap('KeyF');await wait(200);tap('KeyG');check(!modal(),'Tới xưởng nhưng còn ngồi xe vẫn bị chặn');tap('KeyF');await wait(250);tap('KeyG');check(modal(),'Xuống xe tại xưởng mở được trạm');
+ doc().querySelector('#tab-btn-garage').click();check(!doc().querySelector('#shipper-tab-garage').classList.contains('hidden'),'Mở đúng tab độ xe tại xưởng');check(doc().querySelector('#tab-btn-business').disabled,'Quầy bán hàng không mở từ xưởng');
+ const upgrade=doc().querySelector('#garage-upgrades-list button:not(:disabled)');check(!!upgrade,'Có phụ tùng để nâng');upgrade.click();await wait(400);check(JSON.parse(localStorage.getItem(keys[3])).upgrades.engine===1,'Độ xe tại xưởng lưu được nâng cấp');
+ result.textContent+='PASS · quy tắc dịch vụ, đơn nhanh, phanh và nâng xe\n';
+ }catch(e){result.textContent+='FAIL '+e.message;}finally{for(const code of ['KeyW','ShiftLeft','Space'])fire(code,'keyup');}};
+const pos=()=>diag().dataset.playerPosition.split(',').map(Number);
+async function axis(index,target){let held;const until=performance.now()+22000;try{while(Math.abs(pos()[index]-target)>.28){if(performance.now()>until)throw Error('Bị chặn tại '+pos());const positive=target>pos()[index],code=index===0?(positive?'KeyD':'KeyA'):(positive?'KeyS':'KeyW');if(code!==held){if(held)fire(held,'keyup');held=code;fire(held,'keydown');}await wait(35);}}finally{if(held)fire(held,'keyup');}await wait(180);}
+document.querySelector('#memorial').onclick=async()=>{try{
+ result.textContent='';await load(-20,-5,Math.PI);await axis(1,-24);check(pos()[1]<-23.5,'Đi thẳng từ vỉa hè qua lối mở mới');await axis(0,-24);await axis(1,-27);tap('KeyE');await wait(150);check(!doc().querySelector('#dialogue-modal').classList.contains('hidden'),'Đến gần và mở đối thoại tại khu tưởng niệm');result.textContent+='PASS · đi bộ thật từ mặt phố vào sân tưởng niệm\n';
+ }catch(e){result.textContent+='FAIL '+e.message;}};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(350);backup?.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));result.textContent+='Đã khôi phục save';};
+</script></html>

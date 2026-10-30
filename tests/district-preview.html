@@ -1,0 +1,22 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Kiểm tra mở rộng Phú Xá</title>
+<style>body{margin:0;background:#14251f;color:#f6e6be;font:13px system-ui}header{padding:8px;display:flex;gap:8px;align-items:center}button{padding:8px}iframe{width:1200px;height:680px;border:0}#status{white-space:pre-line}</style>
+<header><button data-place="entry">Đầu Phú Gia</button><button data-place="junction">Giao Phú Xá</button><button data-place="dyke">Đê An Dương Vương</button><button id="walk">Đi qua ranh giới cũ</button><button id="restore">Khôi phục save</button><span id="status">Phiên thử 127.0.0.1</span></header><iframe title="Bản đồ mới"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot,parseSnapshot} from '../gameplay-state.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'],backup=keys.map(k=>[k,localStorage.getItem(k)]);
+const wait=ms=>new Promise(r=>setTimeout(r,ms)),doc=()=>frame.contentDocument,pos=()=>doc().querySelector('#interact-prompt').dataset.playerPosition.split(',').map(Number);
+const places={entry:[42,-48,Math.PI],junction:[42,-125,Math.PI],dyke:[20,-230,Math.PI/2]};
+async function ready(){const deadline=performance.now()+30000;while(!doc()?.querySelector('#interact-prompt')?.dataset.playerPosition){if(performance.now()>deadline)throw Error('Không tải được game');await wait(80);}}
+for(const b of document.querySelectorAll('[data-place]'))b.onclick=async()=>{try{
+ frame.src='about:blank';await wait(350);const [x,z,yaw]=places[b.dataset.place];localStorage.setItem(SAVE_KEY,encodeSnapshot({coins:50000,day:1,playerPosition:{x,z},camYaw:yaw}));localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',autoTurnHead:false,brightness:1,showWaypoints:false}));frame.src='../index.html?playtest=1';await ready();status.textContent=`Đã nạp ${b.textContent} · ${pos()}`;
+}catch(e){status.textContent='FAIL '+e.message;}};
+document.querySelector('#walk').onclick=async()=>{try{
+ if(Math.abs(pos()[0]-42)>1||pos()[1]<-54)throw Error('Hãy nạp Đầu Phú Gia trước');
+ const win=frame.contentWindow;win.dispatchEvent(new win.KeyboardEvent('keydown',{code:'KeyW',bubbles:true}));const deadline=performance.now()+22000;
+ try{while(pos()[1]>-95){if(performance.now()>deadline)throw Error('Bị chặn ở '+pos());await wait(50);}}finally{win.dispatchEvent(new win.KeyboardEvent('keyup',{code:'KeyW',bubbles:true}));}
+ await wait(250);doc().dispatchEvent(new win.Event('visibilitychange'));const before=pos();
+ frame.contentWindow.location.reload();await wait(500);await ready();const after=pos();if(Math.hypot(before[0]-after[0],before[1]-after[1])>2)throw Error('Save không giữ vị trí '+before+' → '+after);
+ status.textContent='PASS · đi qua giới hạn -55 tới '+after+' · tải lại giữ vị trí';
+}catch(e){status.textContent='FAIL '+e.message;}};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(500);backup.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));status.textContent='Đã khôi phục save';};
+</script></html>

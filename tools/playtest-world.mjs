@@ -1,0 +1,7 @@
+import fs from'node:fs';
+import {auditRoadNetwork}from'../world-playtest.mjs';
+const seed=Number(process.argv[2]??4105),journeys=Number(process.argv[3]??400);
+if(!Number.isSafeInteger(seed)||!Number.isSafeInteger(journeys)||journeys<1||journeys>10000)throw Error('Usage: npm run playtest:world -- <seed> <journeys 1..10000>');
+const report=auditRoadNetwork({seed,journeys});fs.mkdirSync('artifacts',{recursive:true});fs.writeFileSync('artifacts/world-playtest.json',JSON.stringify(report,null,2));
+const lines=['# Kiểm tra tự động đường đi',`Seed: ${seed} · ${journeys} hành trình giả lập`, '',`- Tới đích: ${report.summary.arrived}`,`- Điểm xuất phát vướng collider: ${report.summary.blockedStarts}`,`- Đoạn chỉ dẫn cần xem lại: ${report.summary.routeFindings}`,`- Bước khảo sát không gian: ${report.summary.spatialSteps}`,`- Tổng chiều dài tuyến hoàn tất: ${report.summary.metres} m`, '', 'Phạm vi: dò đường GPS trên collider khu mở rộng và giới hạn map dùng trong game. Đây chưa phải bot điều khiển game đang render, chưa kiểm tra vật lý xe, hình ảnh hay độ thú vị. Điểm xuất phát vướng vật cản được ghi riêng, không tính là tuyến hỏng.', '', '## Trường hợp tái hiện',...report.findings.slice(0,20).map(f=>`- #${f.id} (${f.mode}): ${JSON.stringify(f.start)} → ${JSON.stringify(f.target)}; ${f.type} tại ${JSON.stringify(f.position)}.`)];
+fs.writeFileSync('artifacts/world-playtest.md',lines.join('\n')+'\n');console.log(JSON.stringify(report.summary));console.log('Reports: artifacts/world-playtest.md and artifacts/world-playtest.json');

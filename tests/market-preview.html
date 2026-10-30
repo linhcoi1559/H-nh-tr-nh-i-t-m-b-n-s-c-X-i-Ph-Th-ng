@@ -1,0 +1,17 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Đối chiếu đồ họa chợ hoa</title>
+<style>body{margin:0;background:#18251f;color:#eee;font:14px system-ui}header{padding:6px;display:flex;gap:12px}button{padding:7px}iframe{display:block;width:1200px;height:650px;border:0}</style>
+<header><button id="load">Xem chợ hoa</button><button id="restore" disabled>Khôi phục dữ liệu thử</button><span id="status">Phiên riêng 127.0.0.1</span></header><iframe title="Chợ hoa"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot} from '../gameplay-state.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status');
+const keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'];let backup;
+document.querySelector('#load').onclick=async()=>{
+ backup=keys.map(k=>[k,localStorage.getItem(k)]);document.querySelector('#load').disabled=true;document.querySelector('#restore').disabled=false;
+ localStorage.setItem(SAVE_KEY,encodeSnapshot({coins:50000,playerPosition:{x:156,z:-3},camYaw:-2.5}));
+ localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',autoTurnHead:false,brightness:1,shadows:true,showWaypoints:false}));
+ frame.src='../index.html?playtest=1';const deadline=performance.now()+40000;
+ while(!frame.contentDocument?.querySelector('#interact-prompt')?.dataset.cameraState){if(performance.now()>deadline){status.textContent='FAIL · khởi động';return;}await new Promise(r=>setTimeout(r,100));}
+ status.textContent='Sẵn sàng · chợ hoa · medium';
+};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await new Promise(r=>setTimeout(r,500));backup?.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));status.textContent='Đã khôi phục';};
+</script></html>

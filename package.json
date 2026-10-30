@@ -1,0 +1,13 @@
+{
+  "devDependencies": {
+    "three": "0.160.0"
+  },
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "build:animations": "node tools/build-citizen-animations.mjs",
+    "build:characters": "node tools/build-adult-characters.mjs",
+    "playtest:world": "node tools/playtest-world.mjs"
+  }
+}

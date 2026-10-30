@@ -1,0 +1,33 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Đối chiếu nhân vật chính và bộ NPC</title>
+<style>body{margin:0;background:#182b25;color:#eee;font:14px system-ui}header{padding:12px;display:flex;gap:9px;align-items:center;flex-wrap:wrap}button{padding:9px 13px}#names{padding:8px 12px;max-width:1176px;line-height:1.6}canvas{display:block}#status{padding:8px 12px}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+<header><button id="quest">Người chơi và NPC nhiệm vụ</button><button id="students">Học sinh và cư dân</button><button id="riders">Người lái và người nhận hàng</button><button id="shop">Khách tiệm và sự kiện</button><button id="motion">Chuyển đi bộ / đứng</button><button id="faces">Cận mặt / toàn thân</button></header><div id="status">Đang tải bộ phận NPC…</div><div id="names"></div>
+<script type="module">
+import * as THREE from 'three';import {GLTFLoader}from'three/addons/loaders/GLTFLoader.js';import{clone}from'three/addons/utils/SkeletonUtils.js';
+import{createCitizenFactory,citizenIdentity,addCitizenIdentityDetails,QUEST_IDENTITIES,RIDER_IDENTITIES,ARCADE_IDENTITIES}from'../citizen-roster.mjs';
+import{refitHumanProportions,canonicalBoneName}from'../neighborhood-models.mjs';import{dressCitizenMaterials,compactCitizenMeshes,addCitizenSatchel}from'../citizen-details.mjs';
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(1200,700);renderer.setPixelRatio(1);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.1;document.body.append(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0xd5ddd6);scene.add(new THREE.HemisphereLight(0xf3f3ea,0x767f70,2.2));const light=new THREE.DirectionalLight(0xfff2db,2.0);light.position.set(-3,6,5);scene.add(light);const fill=new THREE.DirectionalLight(0xd0e2ec,.8);fill.position.set(4,2,2);scene.add(fill);
+const camera=new THREE.OrthographicCamera(-4.6,4.6,2,-3.366,.1,30);camera.position.set(0,0,8);camera.lookAt(0,0,0);
+const root=new THREE.Group();scene.add(root);let actors=[],walking=false,faces=false,ids=[];
+const loader=new GLTFLoader(),entries=await Promise.all(['player','guard','official','vendor','resident','veteran'].map(async key=>[key,await loader.loadAsync(`/assets/models/${key==='player'?'player-cozy':`npc-${key}`}-adult.glb`)]));const sources=Object.fromEntries(entries),create=createCitizenFactory(sources);
+function label(text,x,y){const c=document.createElement('canvas');c.width=512;c.height=80;const ctx=c.getContext('2d');ctx.fillStyle='#203e34';ctx.fillRect(0,0,512,80);ctx.fillStyle='#eeeadd';ctx.textAlign='center';ctx.font='bold 25px system-ui';ctx.fillText(text,256,49);const map=new THREE.CanvasTexture(c);map.colorSpace=THREE.SRGBColorSpace;const s=new THREE.Sprite(new THREE.SpriteMaterial({map,depthTest:false}));s.position.set(x,y,.1);s.scale.set(2.6,.4,1);root.add(s);}
+function show(next){ids=next;root.clear();actors=[];
+ next.forEach((id,i)=>{const player=id==='player',citizen=player?null:create(id),profile=citizen?.profile,model=player?clone(sources.player.scene):citizen.model;
+  refitHumanProportions(model,profile?.height||1.67);dressCitizenMaterials(model);compactCitizenMeshes(model);const bones={};model.traverse(n=>{if(n.isBone)bones[canonicalBoneName(n.name)]=n;});if(profile){addCitizenIdentityDetails(model,bones,profile);if(profile.bag==='satchel')addCitizenSatchel(model,bones);}
+  const holder=new THREE.Group();holder.position.set((i%3-1)*3,-Math.floor(i/3)*2.65,0);holder.rotation.y=(i%3-1)*-.1;holder.add(model);root.add(holder);
+  const contact=new THREE.Mesh(new THREE.CircleGeometry(.42,24).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:0x55665b,transparent:true,opacity:.16}));contact.position.copy(holder.position);contact.position.y-=.01;root.add(contact);
+  label(player?'NHÂN VẬT CHÍNH':profile.label,holder.position.x,holder.position.y-.3);
+  const animations=player?sources.player.animations:citizen.animations,mixer=new THREE.AnimationMixer(model),clips={};for(const source of animations){const clip=source.clone();clip.tracks=clip.tracks.filter(t=>!/^head\.scale$/i.test(t.name));clips[clip.name.toLowerCase()]=clip;}
+  const action=mixer.clipAction(clips[walking?'walk':'idle']);action.play();mixer.setTime(i*.23);actors.push({model,holder,mixer,clips,faceY:bones.head.getWorldPosition(new THREE.Vector3()).y-holder.position.y});
+ });
+ if(faces)for(const actor of actors){actor.model.scale.multiplyScalar(2.0);actor.model.position.y-=actor.faceY*1.65;}
+ document.querySelector('#names').textContent=next.map(id=>id==='player'?'Người chơi: giữ mẫu riêng':citizenIdentity(id).label+' · '+id).join(' | ');document.querySelector('#status').textContent='Sẵn sàng · sáu mẫu thật cùng bộ mô hình đang dùng trong game';
+}
+document.querySelector('#quest').onclick=()=>show(['player',...QUEST_IDENTITIES]);
+document.querySelector('#students').onclick=()=>show(['student-mai','student-minh','student-linh','runner-khoa','market-lan','market-ngoc']);
+document.querySelector('#riders').onclick=()=>show([...RIDER_IDENTITIES.slice(0,3),'tailor-lien','books-son','water-binh']);
+document.querySelector('#shop').onclick=()=>show([...ARCADE_IDENTITIES,'farmer-loc','elder-huong']);
+document.querySelector('#motion').onclick=()=>{walking=!walking;show(ids);};document.querySelector('#faces').onclick=()=>{faces=!faces;show(ids);};
+show(['player',...QUEST_IDENTITIES]);const clock=new THREE.Clock();function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);actors.forEach(a=>a.mixer.update(dt));renderer.render(scene,camera);}animate();
+</script></html>

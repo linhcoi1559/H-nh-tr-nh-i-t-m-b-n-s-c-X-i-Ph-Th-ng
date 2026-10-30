@@ -1,0 +1,149 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Phú Thượng · kiểm tra vật liệu</title>
+<style>body{margin:0;background:#15201c;color:#d9dfce;font:13px system-ui}header{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px}button{padding:6px 8px;cursor:pointer}iframe{display:block;border:0;width:100%;height:720px}#status{flex:1;min-width:140px}</style>
+<header><button id="load">Mở cảnh kiểm tra</button><button id="shop" disabled>Quán xôi</button><button id="lane" disabled>Ngách gạch</button><button id="alley" disabled>Ngõ 41</button><button id="left" disabled>Nhìn trái</button><button id="right" disabled>Nhìn phải</button><button id="restore" disabled>Khôi phục save</button><span id="status">Phiên kiểm tra riêng · cấu hình trung bình · không đổi save ở localhost.</span></header><iframe id="game" title="Cảnh kiểm tra đồ họa"></iframe>
+<script type="module">
+import { SAVE_KEY, encodeSnapshot } from '../gameplay-state.mjs';
+const frame = document.querySelector('#game'), status = document.querySelector('#status');
+const saveKeys = [SAVE_KEY, 'phu_thuong_story_revision', 'phu_thuong_game_settings_v3'];
+const daytime = new URLSearchParams(location.search).has('day');
+const streetView = new URLSearchParams(location.search).has('street');
+const alleyEntry = new URLSearchParams(location.search).has('alley-entry');
+// Render the same desktop viewport even when this preview is in a narrow panel.
+function fitPreview() { frame.style.width = '1280px'; frame.style.height = '800px'; document.body.style.minWidth = '1280px'; }
+fitPreview(); addEventListener('resize', fitPreview);
+const west = document.createElement('button'); west.textContent = 'Nhìn cuối ngách';
+west.id = 'west'; west.disabled = true;
+document.querySelector('header').append(west);
+west.onclick = () => { look(Math.PI / 2 - viewOffset); };
+const edge = document.createElement('button'); edge.textContent = 'Thử tường cuối ngách';
+edge.id = 'edge'; edge.disabled = true;
+document.querySelector('header').append(edge);
+const testResult = document.createElement('p'); document.querySelector('header').after(testResult);
+edge.onclick = async () => {
+  lock(true);
+  try {
+    if (viewOffset) { look(-viewOffset); await wait(500); }
+    await axis(1, -37); await axis(0, -94.8);
+    key('KeyA', true); key('Space', true);
+    await wait(1500); key('KeyA', false); key('Space', false);
+    const x = pos()[0];
+    testResult.textContent = (x > -95.8 ? 'PASS' : 'FAIL') + ' va chạm cuối ngách khi đi và nhảy · ' + pos();
+    look(Math.PI / 2);
+  } catch (e) { testResult.textContent = 'FAIL ' + e.message; }
+  finally { key('KeyA', false); key('Space', false); }
+  lock(false);
+};
+const north = document.createElement('button'); north.id = 'north'; north.disabled = true; north.textContent = 'Thử cuối ngõ';
+document.querySelector('header').append(north);
+north.onclick = async () => {
+  lock(true);
+  try {
+    if (viewOffset) { look(-viewOffset); await wait(500); }
+    await axis(1, -37); await axis(0, -67); await axis(1, -51.5);
+    key('KeyW', true); key('Space', true); await wait(1800);
+    testResult.textContent = (pos()[1] >= (daytime ? -55.01 : -52.01) ? 'PASS' : 'FAIL') + ' cuối ngõ · ' + pos();
+  } catch(e) { testResult.textContent = 'FAIL ' + e.message; }
+  finally { key('KeyW', false); key('Space', false); lock(false); }
+};
+const cameraButton = document.createElement('button'); cameraButton.id = 'camera'; cameraButton.disabled = true; cameraButton.textContent = 'Đổi FPS/TPS';
+document.querySelector('header').append(cameraButton);
+cameraButton.onclick = () => doc().querySelector('#camera-mode-btn').click();
+const entrance = document.createElement('button'); entrance.id = 'entrance'; entrance.disabled = true; entrance.textContent = 'Thử thông ra phố';
+document.querySelector('header').append(entrance);
+entrance.onclick = async () => {
+  lock(true);
+  try {
+    if (viewOffset) { look(-viewOffset); await wait(500); }
+    if (pos()[0] < -75) await axis(1, -37);
+    if (pos()[0] > -66.9 && Math.abs(pos()[1] + 37) < 1.2) await axis(1, -35.8);
+    await axis(0, -67); await axis(1, -36); await axis(0, -65.5);
+    await axis(1, -8.5); await axis(1, -37);
+    testResult.textContent = 'PASS ngách nối ra phố và quay lại · ' + pos();
+  } catch (e) { testResult.textContent = 'FAIL ' + e.message; }
+  finally { lock(false); }
+};
+let backup = null;
+let viewOffset = 0;
+setInterval(() => {
+  if (!backup || !doc()?.querySelector('#performance-readout')) return;
+  status.textContent = (daytime ? 'Ban ngày' : 'Cốt truyện') + ' · ' + doc().querySelector('#interact-prompt').dataset.playerPosition + ' · ' + doc().querySelector('#performance-readout').textContent;
+}, 3000);
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const doc = () => frame.contentDocument;
+async function until(fn) { const deadline = performance.now() + 25000; while (!fn()) { if (performance.now() > deadline) throw new Error('Không tải được cảnh'); await wait(50); } }
+function key(code, down) { frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(down ? 'keydown' : 'keyup', { code, bubbles: true })); }
+const pos = () => doc().querySelector('#interact-prompt').dataset.playerPosition.split(',').map(Number);
+async function axis(index, target) {
+  let held = null;
+  const deadline = performance.now() + 20000;
+  try {
+    while (Math.abs(pos()[index] - target) > .3) {
+      if (performance.now() > deadline) throw new Error('Đường đi bị chặn tại ' + pos());
+      const positive = target > pos()[index];
+      const code = index === 0 ? positive ? 'KeyD' : 'KeyA' : positive ? 'KeyS' : 'KeyW';
+      if (held !== code) { if (held) key(held, false); key(code, true); held = code; }
+      await wait(30);
+    }
+  } finally { if (held) key(held, false); }
+  await wait(220);
+}
+function lock(disabled) {
+  ['shop', 'lane', 'alley', 'left', 'right', 'west', 'edge', 'north', 'camera', 'entrance'].forEach(id => { document.getElementById(id).disabled = disabled; });
+  edge.disabled = disabled || !daytime; // Story has its own earlier walkable boundary.
+}
+function look(angle) {
+  const target = doc().querySelector('#canvas-container canvas');
+  const scope = frame.contentWindow;
+  target.dispatchEvent(new scope.PointerEvent('pointerdown', { clientX: 500, clientY: 300, bubbles: true }));
+  scope.dispatchEvent(new scope.PointerEvent('pointermove', { clientX: 500 - angle / .0052, clientY: 300 }));
+  scope.dispatchEvent(new scope.PointerEvent('pointerup'));
+  viewOffset += angle;
+}
+document.querySelector('#left').onclick = () => look(Math.PI / 6);
+document.querySelector('#right').onclick = () => look(-Math.PI / 6);
+document.querySelector('#load').onclick = async () => {
+  try {
+    backup = saveKeys.map(id => [id, localStorage.getItem(id)]);
+    localStorage.setItem(SAVE_KEY, encodeSnapshot({ time: daytime ? 9.5 : 18.65, coins: 50000, playerPosition: { x: -67, z: streetView ? -8.5 : alleyEntry ? -10 : -37 }, camYaw: streetView ? 0 : Math.PI }));
+    localStorage.setItem(saveKeys[1], '2');
+    localStorage.setItem(saveKeys[2], JSON.stringify({ preset: 'medium', shadows: true, autoTurnHead: false, camMode: 'fps', brightness: 1, flashlightPower: .85, mouseSensitivity: 1, showWaypoints: false }));
+    frame.src = '../index.html?playtest=1';
+    await until(() => doc()?.querySelector('#interact-prompt')?.dataset.playerPosition);
+    if (!daytime) {
+      doc().querySelector('#story-mode-btn').click();
+      await wait(100); doc().querySelector('#story-start-btn').click();
+    }
+    await wait(1400);
+    document.querySelector('#load').disabled = true;
+    document.querySelector('#restore').disabled = false;
+    lock(false); status.textContent = 'Đã tải · 1K PBR · Medium · bóng đổ bật';
+  } catch (error) { status.textContent = error.message; document.querySelector('#restore').disabled = !backup; }
+};
+async function tour(destination) {
+  lock(true);
+  try {
+    if (viewOffset) { look(-viewOffset); await wait(500); }
+    // Walk around the parked player bike, which remains a solid object.
+    if (pos()[0] > -66.9 && Math.abs(pos()[1] + 37) < 1.2) {
+      await axis(1, -35.8); await axis(0, -67);
+    }
+    if (pos()[0] > -75) await axis(1, -37);
+    else if (pos()[1] < -38) await axis(1, -37);
+    if (destination === 'shop') { await axis(0, -90); await axis(1, -40.15); }
+    else if (destination === 'lane') await axis(0, -81);
+    else { await axis(0, -67); await axis(1, -34); }
+    await wait(1600);
+    status.textContent = destination + ' · ' + doc().querySelector('#performance-readout').textContent;
+    testResult.textContent = 'PASS đường tới ' + destination + ' · ' + pos();
+  } catch (error) { testResult.textContent = 'FAIL ' + error.message; }
+  lock(false);
+}
+['shop', 'lane', 'alley'].forEach(id => { document.getElementById(id).onclick = () => tour(id); });
+document.querySelector('#restore').onclick = async () => {
+  ['KeyW','KeyS','KeyA','KeyD'].forEach(code => key(code, false));
+  frame.src = 'about:blank'; await wait(500);
+  backup?.forEach(([id, value]) => value === null ? localStorage.removeItem(id) : localStorage.setItem(id, value));
+  backup = null; lock(true); document.querySelector('#load').disabled = false; document.querySelector('#restore').disabled = true;
+  status.textContent = 'Đã khôi phục dữ liệu trước kiểm tra.';
+};
+</script></html>
