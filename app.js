@@ -13575,7 +13575,7 @@ function animate() {
       constrainDistrictPosition(playerGroup.position);
     }
 
-    if(!horrorModeActive)constrainPedestrian(playerGroup.position,{x:prevFootX,z:prevFootZ});
+    // The player can walk on the roadway; crossing restrictions apply to NPCs.
     // Kiểm tra va chạm vật lý & trượt mượt dọc tường không bị mắc kẹt vận tốc
     resolvePlayerCollisions(playerGroup.position, 0.46);
     if (horrorModeActive) constrainNightPosition(playerGroup.position);
