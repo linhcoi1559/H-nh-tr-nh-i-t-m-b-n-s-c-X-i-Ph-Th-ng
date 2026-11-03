@@ -29,7 +29,7 @@ export function neighborhoodBoundarySegments(){
   const n=nearestRoad(x,z);if(n.distance<n.width/2+32)return true;
   return EAST_PUBLIC_AREAS.some(a=>x>=a.minX-25&&x<=a.maxX+25&&z>=a.minZ-25&&z<=a.maxZ+25);
  };
- for(let x=-280;x<430;x+=step)for(let z=-290;z<180;z+=step)if(inside(x+5,z+5))cells.add(key(x,z));
+ for(let x=-340;x<430;x+=step)for(let z=-290;z<180;z+=step)if(inside(x+5,z+5))cells.add(key(x,z));
  const segments=[];
  for(const cell of cells){const [x,z]=cell.split(',').map(Number);
   for(const [dx,dz]of [[-1,0],[1,0],[0,-1],[0,1]]){

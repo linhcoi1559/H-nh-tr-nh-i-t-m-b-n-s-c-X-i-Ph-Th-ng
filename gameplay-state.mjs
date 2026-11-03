@@ -1,6 +1,7 @@
 import { normalizeNight } from './story-night.mjs';
 import { normalizeDaylife } from './daylife-state.mjs';
 import { normalizeArcade } from './arcade-state.mjs';
+import { normalizeTeaChess } from './tea-chess-state.mjs';
 
 export const SAVE_VERSION = 1;
 export const SAVE_KEY = 'phu-thuong-save-v1';
@@ -65,8 +66,9 @@ export function normalizeSnapshot(input = {}) {
     night: normalizeNight(input.night),
     daylife: normalizeDaylife(input.daylife, Math.max(1,Math.floor(Number(input.day)||1))),
     arcade: normalizeArcade(input.arcade, Math.max(1,Math.floor(Number(input.day)||1))),
+    teaChess: normalizeTeaChess(input.teaChess),
     playerPosition: {
-      x: clamp(input.playerPosition?.x ?? 0, -230, 430),
+      x: clamp(input.playerPosition?.x ?? 0, -280, 430),
       y: clamp(input.playerPosition?.y ?? 0, 0, 20),
       z: clamp(input.playerPosition?.z ?? 1.5, -270, 115)
     },

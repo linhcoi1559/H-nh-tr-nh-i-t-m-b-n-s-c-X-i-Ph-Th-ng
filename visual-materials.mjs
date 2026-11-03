@@ -23,17 +23,20 @@ export function createVisualMaterials(renderer) {
     const key = `${asset}/${color}/${wet}`;
     if (materials.has(key)) return materials.get(key);
     const maps = textureSet(asset);
+    const isAsphalt = asset === 'asphalt_02';
+    const isRoadOrStone = asset === 'asphalt_02' || asset === 'cobblestone_floor_04' || asset === 'concrete_floor_02';
     const material = new THREE.MeshStandardMaterial({
       map: maps.color,
       normalMap: maps.normal,
       roughnessMap: maps.roughness,
       color,
-      normalScale: new THREE.Vector2(wet ? .38 : .65, wet ? .38 : .65),
-      roughness: wet ? .68 : .96,
-      metalness: 0,
-      envMapIntensity: wet ? .65 : .3
+      normalScale: new THREE.Vector2(wet ? .45 : .72, wet ? .45 : .72),
+      roughness: wet ? .34 : (isAsphalt ? .82 : (isRoadOrStone ? .84 : .88)),
+      metalness: wet ? (isAsphalt ? .08 : .04) : 0,
+      envMapIntensity: wet ? .95 : (isAsphalt ? .52 : .42)
     });
     material.name = `CC0/${key}`;
+    material.userData.worldSurface={meters:asset==='red_brick'?2.2:asset==='asphalt_02'?3.5:asset==='aerial_grass_rock'?5:2.4};
     material.userData.wetSurface = wet;
     materials.set(key, material);
     return material;
@@ -78,6 +81,8 @@ export function createVisualMaterials(renderer) {
     brick: () => surface('red_brick', 0xc5b7a5),
     asphalt: () => surface('asphalt_02', 0xb7b9b6),
     concrete: (wet = false) => surface('concrete_floor_02', wet ? 0x83908c : 0xc5c1b6, wet),
+    terrain: () => surface('aerial_grass_rock', 0xadb49a),
+    roof: () => surface('clay_roof_tiles_02', 0xc1afa0),
     wood,
     steamMap,
     contactShadow(width, depth) {
@@ -86,7 +91,10 @@ export function createVisualMaterials(renderer) {
     },
     updateLighting(night) {
       materials.forEach(material => {
-        material.envMapIntensity = material.userData.wetSurface ? (night ? .52 : .8) : (night ? .16 : .45);
+        const isAsphalt = material.name.includes('asphalt_02');
+        material.envMapIntensity = material.userData.wetSurface
+          ? (night ? .65 : 1.0)
+          : (night ? .22 : (isAsphalt ? .52 : .42));
       });
     }
   };

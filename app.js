@@ -17,7 +17,7 @@ import {advanceCityClock,nightAmount} from './city-atmosphere-state.mjs';
 import {serviceAccess,brakeBikeSpeed,MEMORIAL_ACCESS,blocksMemorialEntrance,memorialPath} from './street-access.mjs';
 import {createCitizenFactory,addCitizenIdentityDetails,QUEST_IDENTITIES,AMBIENT_IDENTITIES,RIDER_IDENTITIES,EVENT_IDENTITIES} from './citizen-roster.mjs';
 import {forwardClearance,trafficStep,resolveTrafficCar,trafficBodiesOverlap} from './street-traffic.mjs';
-import {addCitizenHelmet,dressCitizenMaterials,addCitizenSatchel,compactCitizenMeshes} from './citizen-details.mjs';
+import {addCitizenHelmet,dressCitizenMaterials,addCitizenSatchel,compactCitizenMeshes,installHumanOrganicShader} from './citizen-details.mjs';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
@@ -26,21 +26,26 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import {compileStaticGroups,compileArchitectureChunks,createShadowBudget,crossingRoadGeometry,detailVisibility} from './render-budget.mjs';
 import {createPottedMarketTree,createMarketBouquet,createMarketCanopy} from './market-models.mjs';
 import {createStreetTree,createStool,createTeaTable,createParkBench,carCoachwork,scooterPanel,replaceBuildingEnvelopes,refitHumanProportions,ellipsoidGeometry,canonicalBoneName,foliageGeometry,flowerGeometry,archedWindowGeometry,shopCanopyGeometry} from './neighborhood-models.mjs';
 import { createVisualMaterials, worldUVs } from './visual-materials.mjs';
+import {applyEnvironmentSurfaces,createDistrictTerrain} from './environment-surfaces.mjs';
+import {environmentLighting} from './environment-lighting.mjs';
 import { CollisionGrid, cameraObstructionFraction } from './collision-grid.mjs';
+import {separatePedestrians} from './pedestrian-spacing.mjs';
+import {gridlockPair,safeRecoveryStep} from './traffic-recovery.mjs';
 import { ALLEY_BOUNDARY_WALLS, ALLEY_BACKING_BUILDINGS, SOUTH_STREET_INFILL, CORE_BACKDROP_SHELLS, backdropFootprint } from './world-closure.mjs';
 import { createDaylife } from './daylife.mjs';
-import { createNeighborhoodArcade } from './arcade.mjs';
-import { ARCADE_SHOP, ARCADE_APPROACH_WALLS } from './arcade-state.mjs';
+import { createTeaChessStall } from './tea-chess.mjs';
+import { TEA_SHOP as ARCADE_SHOP, TEA_APPROACH_WALLS as ARCADE_APPROACH_WALLS } from './tea-chess-state.mjs';
 import {DISTRICT_ROADS,DISTRICT_PLACES,EAST_PUBLIC_AREAS,nearestRoad,constrainDistrictPosition,districtGroundHeight,districtLocationName} from './district-routes.mjs';
 import {buildDistrictExtension} from './district-world.mjs';
 import {buildEastWorld} from './east-world.mjs';
 import {buildDistrictStreetscape} from './district-streetscape.mjs';
 import {persistSnapshot,resetHeldInputs,canUseCamera} from './runtime-guards.mjs';
-import {districtPath,nextDistrictWaypoint} from './district-navigation.mjs';
+import {districtPath,nextDistrictWaypoint,streetSidePath} from './district-navigation.mjs';
 import { EVIDENCE, NIGHT_ORDERS, normalizeNight, canResolveNight, constrainNightPosition, circuitStep, createThreat, perceiveThreat, lineBlocked, nextRoutePoint } from './story-night.mjs';
 import {
   SAVE_KEY,
@@ -75,28 +80,44 @@ container.appendChild(renderer.domElement);
 const visualMaterials = createVisualMaterials(renderer);
 const maxAnisotropy = Math.min(16, renderer.capabilities.getMaxAnisotropy());
 
-// Hệ thống Hậu kỳ Điện ảnh (Post-Processing: UnrealBloomPass + Cinematic Hanoi Color Grading & Sharpness)
+// Hệ thống Hậu kỳ Điện ảnh (Post-Processing: 4x MSAA HDR + UnrealBloomPass + Volumetric God-Rays + Cinematic ACES Grading + SMAA)
 let composer = null;
 let bloomPass = null;
+let cinematicPass = null;
+const _sunScreenPos = new THREE.Vector3();
 try {
-  composer = new EffectComposer(renderer);
+  const maxSamples = Math.min(4, renderer.capabilities.maxSamples || 0);
+  const composerTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+    type: THREE.HalfFloatType,
+    samples: maxSamples
+  });
+  composer = new EffectComposer(renderer, composerTarget);
   const renderPass = new RenderPass(scene, camera);
   composer.addPass(renderPass);
 
   bloomPass = new UnrealBloomPass(
     new THREE.Vector2(Math.round(window.innerWidth * 0.65), Math.round(window.innerHeight * 0.65)),
-    0.26, // Cường độ Bloom vừa vặn làm rực đèn lồng, mặt trời, sơn xe & cổng Neon
-    0.45, // Bán kính lan tỏa mềm mại
-    0.84  // Ngưỡng lọc sáng (chỉ phát sáng các vùng highlight thật)
+    0.18,
+    0.32,
+    1.08 // Keep ordinary white walls and road paint out of the glow while blooming lanterns & sun.
   );
   composer.addPass(bloomPass);
+
+  // Chuyển đổi HDR linear sang tone-mapped sRGB trước pass hậu kỳ điện ảnh
+  composer.addPass(new OutputPass());
 
   const HanoiCinematicShader = {
     uniforms: {
       tDiffuse: { value: null },
-      contrast: { value: 1.0 },
-      saturation: { value: 0.94 },
-      vignette: { value: 0.08 }
+      time: { value: 0.0 },
+      contrast: { value: 1.035 },
+      saturation: { value: 1.06 },
+      vignette: { value: 0.055 },
+      chromatic: { value: 0.0018 },
+      grain: { value: 0.012 },
+      sunFlare: { value: 0.0 },
+      sunScreenXY: { value: new THREE.Vector2(0.5, 0.75) },
+      godRayStrength: { value: 0.0 }
     },
     vertexShader: `
       varying vec2 vUv;
@@ -107,29 +128,87 @@ try {
     `,
     fragmentShader: `
       uniform sampler2D tDiffuse;
+      uniform float time;
       uniform float contrast;
       uniform float saturation;
       uniform float vignette;
+      uniform float chromatic;
+      uniform float grain;
+      uniform float sunFlare;
+      uniform vec2 sunScreenXY;
+      uniform float godRayStrength;
       varying vec2 vUv;
+
+      float hash21(vec2 p) {
+        p = fract(p * vec2(233.34, 851.73));
+        p += dot(p, p + 23.45);
+        return fract(p.x * p.y);
+      }
+
       void main() {
-        vec4 texel = texture2D(tDiffuse, vUv);
-        vec3 col = texel.rgb;
-        // Cân bằng tương phản & độ bão hòa sắc nắng thu Hà Nội
-        col = (col - 0.5) * contrast + 0.5;
+        vec2 uv = vUv;
+        vec2 d = uv - 0.5;
+        float d2 = dot(d, d);
+
+        // 1. Quang sai quang học nhẹ ở rìa màn hình (Chromatic aberration)
+        vec2 ca = d * d2 * chromatic;
+        float r = texture2D(tDiffuse, uv - ca).r;
+        float g = texture2D(tDiffuse, uv).g;
+        float b = texture2D(tDiffuse, uv + ca).b;
+        vec3 col = vec3(r, g, b);
+
+        // 2. Tia nắng Volumetric God-Rays & Screen-Space Micro-Contrast (UE5 Lumen/Atmosphere style)
+        if (godRayStrength > 0.001) {
+          vec2 deltaUv = (uv - sunScreenXY) * 0.065;
+          vec2 sampleUv = uv;
+          float shaft = 0.0;
+          float decay = 1.0;
+          for (int i = 0; i < 6; i++) {
+            sampleUv -= deltaUv;
+            vec3 sCol = texture2D(tDiffuse, clamp(sampleUv, 0.002, 0.998)).rgb;
+            float sLuma = dot(sCol, vec3(0.2126, 0.7152, 0.0722));
+            shaft += smoothstep(0.68, 0.98, sLuma) * decay;
+            decay *= 0.82;
+          }
+          col += vec3(1.0, 0.86, 0.58) * (shaft / 6.0) * godRayStrength;
+        }
+
+        // 3. Tông màu nắng thu Hà Nội (UE5 Filmic Golden hour highlight lift & Lumen bounce shadows)
+        vec3 warmHighlight = vec3(1.045, 1.02, 0.96);
+        vec3 coolShadow = vec3(0.95, 0.98, 1.04);
         float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        vec3 graded = mix(coolShadow * col, warmHighlight * col, smoothstep(0.16, 0.84, luma));
+        col = mix(col, graded, 0.58);
+
+        // 4. Đường cong tương phản Filmic S-Curve & độ bão hòa màu tự nhiên
+        col = (col - 0.5) * contrast + 0.5;
+        col = clamp(col, 0.0, 1.0);
+        luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
         col = mix(vec3(luma), col, saturation);
-        // Viền tối điện ảnh rất nhẹ ở 4 góc màn hình
-        vec2 d = vUv - 0.5;
-        float vig = clamp(1.0 - dot(d, d) * vignette * 1.6, 0.78, 1.0);
+
+        // 5. Quầng sáng ấm khi nhìn thẳng hướng mặt trời (Sun flare wash)
+        if (sunFlare > 0.001) {
+          col += vec3(0.16, 0.10, 0.03) * sunFlare;
+        }
+
+        // 6. Viền tối quang học tự nhiên
+        float vig = clamp(1.0 - d2 * vignette * 1.85, 0.72, 1.0);
         col *= vig;
-        gl_FragColor = vec4(max(col, vec3(0.0)), texel.a);
+
+        // 7. Hạt dither khử vệt màu trên bầu trời và mảng tối (Film micro-grain)
+        if (grain > 0.0) {
+          float noise = (hash21(uv * 1280.0 + fract(time * 1.7)) - 0.5) * grain;
+          col += noise;
+        }
+
+        gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
       }
     `
   };
-  const cinematicPass = new ShaderPass(HanoiCinematicShader);
+  cinematicPass = new ShaderPass(HanoiCinematicShader);
   composer.addPass(cinematicPass);
-  // Keep scene-linear HDR values until the final tone-map/sRGB conversion.
-  composer.addPass(new OutputPass());
+  // Kết hợp 4x MSAA phần cứng + SMAA khử răng cưa hậu kỳ cho đường dây điện & cạnh nhà sắc nét tuyệt đối
+  composer.addPass(new SMAAPass(window.innerWidth, window.innerHeight));
 } catch {
   composer = null;
 }
@@ -142,6 +221,7 @@ function loadPbrTex(url, repeatX = 1, repeatY = 1, isColor = true) {
   t.repeat.set(repeatX, repeatY);
   t.anisotropy = maxAnisotropy;
   t.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  if(url.includes('assets/textures/')&&!url.includes('sky_'))t.userData.worldTileMeters=url.includes('bark_')?1.8:url.includes('clay_roof')?2.2:url.includes('asphalt')?3.5:2.4;
   return t;
 }
 
@@ -256,7 +336,7 @@ function createRealisticSkyDome() {
 }
 const skyDomeMesh = createRealisticSkyDome();
 
-const hemiLight = new THREE.HemisphereLight(0xfffbeb, 0x64748b, 1.12);
+const hemiLight = new THREE.HemisphereLight(0xe5eced, 0x777864, 1.25);
 scene.add(hemiLight);
 
 const sunLight = new THREE.DirectionalLight(0xfff8dc, 2.75);
@@ -736,24 +816,41 @@ const roofMatGreen = createRoofTileMaterial('#1d8a7e');
 const agedYellowWallMat = createAgedYellowWallMaterial();
 
 function createHipRoofMesh(width, depth, roofHeight, mat = roofMatRed) {
-  const w2 = width / 2 + 0.6;
-  const d2 = depth / 2 + 0.6;
-  const ridgeW = Math.max(width * 0.32, 0.5);
+  const w2 = width / 2 + 0.68;
+  const d2 = depth / 2 + 0.68;
+  const ridgeW = Math.max(width * 0.34, 0.55);
+  const wm = (w2 + ridgeW) * 0.52;
+  const dm = d2 * 0.52;
+  const ym = roofHeight * 0.42;
 
   const vertices = new Float32Array([
-    -w2, 0, d2,   w2, 0, d2,   ridgeW, roofHeight, 0,
-    -w2, 0, d2,   ridgeW, roofHeight, 0,   -ridgeW, roofHeight, 0,
-    w2, 0, -d2,   -w2, 0, -d2,   -ridgeW, roofHeight, 0,
-    w2, 0, -d2,   -ridgeW, roofHeight, 0,   ridgeW, roofHeight, 0,
-    -w2, 0, -d2,   -w2, 0, d2,   -ridgeW, roofHeight, 0,
-    w2, 0, d2,   w2, 0, -d2,   ridgeW, roofHeight, 0
+    // Tầng mái dưới (độ dốc thoai thoải đua rộng ra hiên kiểu mái ngói truyền thống)
+    -w2, 0, d2,   w2, 0, d2,   wm, ym, dm,
+    -w2, 0, d2,   wm, ym, dm,   -wm, ym, dm,
+    w2, 0, -d2,   -w2, 0, -d2,   -wm, ym, -dm,
+    w2, 0, -d2,   -wm, ym, -dm,   wm, ym, -dm,
+    -w2, 0, -d2,   -w2, 0, d2,   -wm, ym, dm,
+    -w2, 0, -d2,   -wm, ym, dm,   -wm, ym, -dm,
+    w2, 0, d2,   w2, 0, -d2,   wm, ym, -dm,
+    w2, 0, d2,   wm, ym, -dm,   wm, ym, dm,
+    // Tầng mái trên vút lên sống nóc
+    -wm, ym, dm,   wm, ym, dm,   ridgeW, roofHeight, 0,
+    -wm, ym, dm,   ridgeW, roofHeight, 0,   -ridgeW, roofHeight, 0,
+    wm, ym, -dm,   -wm, ym, -dm,   -ridgeW, roofHeight, 0,
+    wm, ym, -dm,   -ridgeW, roofHeight, 0,   ridgeW, roofHeight, 0,
+    -wm, ym, -dm,   -wm, ym, dm,   -ridgeW, roofHeight, 0,
+    wm, ym, dm,   wm, ym, -dm,   ridgeW, roofHeight, 0
   ]);
 
   const uvs = new Float32Array([
-    0, 0,  1, 0,  0.8, 1,   0, 0,  0.8, 1,  0.2, 1,
-    0, 0,  1, 0,  0.8, 1,   0, 0,  0.8, 1,  0.2, 1,
-    0, 0,  1, 0,  0.5, 1,
-    0, 0,  1, 0,  0.5, 1
+    0, 0,  1, 0,  0.9, 0.48,   0, 0,  0.9, 0.48,  0.1, 0.48,
+    0, 0,  1, 0,  0.9, 0.48,   0, 0,  0.9, 0.48,  0.1, 0.48,
+    0, 0,  1, 0,  0.75, 0.48,  0, 0,  0.75, 0.48, 0.25, 0.48,
+    0, 0,  1, 0,  0.75, 0.48,  0, 0,  0.75, 0.48, 0.25, 0.48,
+    0.1, 0.48,  0.9, 0.48,  0.8, 1,   0.1, 0.48,  0.8, 1,  0.2, 1,
+    0.1, 0.48,  0.9, 0.48,  0.8, 1,   0.1, 0.48,  0.8, 1,  0.2, 1,
+    0.25, 0.48,  0.75, 0.48,  0.5, 1,
+    0.25, 0.48,  0.75, 0.48,  0.5, 1
   ]);
 
   const geo = new THREE.BufferGeometry();
@@ -1716,25 +1813,37 @@ async function loadAllCharactersAndAmbientLife() {
 // Tạo chú chó Corgi 3D chạy lon ton theo sau người chạy bộ trên phố Phú Thượng
 function createCute3DDog() {
   const dog = new THREE.Group();
-  const furMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.7 });
-  const whiteMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.7 });
+  const furMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.65 });
+  const whiteMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.68 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.25 });
+  installHumanOrganicShader(furMat, 'cloth');
+  installHumanOrganicShader(whiteMat, 'cloth');
 
-  const body = new THREE.Mesh(ellipsoidGeometry(0.28, 0.24, 0.52), furMat);
+  const body = new THREE.Mesh(ellipsoidGeometry(0.28, 0.24, 0.52, 18, 14), furMat);
   body.position.y = 0.26;
   body.castShadow = true;
   dog.add(body);
 
-  const head = new THREE.Mesh(ellipsoidGeometry(0.24, 0.22, 0.26), furMat);
+  const chest = new THREE.Mesh(ellipsoidGeometry(0.24, 0.2, 0.24, 16, 12), whiteMat);
+  chest.position.set(0, 0.25, 0.18);
+  dog.add(chest);
+
+  const head = new THREE.Mesh(ellipsoidGeometry(0.24, 0.22, 0.26, 18, 14), furMat);
   head.position.set(0, 0.38, 0.26);
   dog.add(head);
 
-  const snout = new THREE.Mesh(ellipsoidGeometry(0.12, 0.1, 0.14), whiteMat);
+  const snout = new THREE.Mesh(ellipsoidGeometry(0.12, 0.1, 0.15, 14, 10), whiteMat);
   snout.position.set(0, 0.34, 0.4);
   dog.add(snout);
 
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.026, 12, 10), darkMat);
+  nose.position.set(0, 0.36, 0.475);
+  dog.add(nose);
+
   [-0.08, 0.08].forEach((ex) => {
-    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.12, 6), furMat);
-    ear.position.set(ex, 0.52, 0.24);
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.12, 14), furMat);
+    ear.position.set(ex, 0.51, 0.24);
+    ear.rotation.z = ex * -1.4;
     dog.add(ear);
   });
 
@@ -1744,7 +1853,7 @@ function createCute3DDog() {
     [-0.09, 0.18],
     [0.09, 0.18]
   ].forEach(([lx, lz]) => {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.03, 0.18, 8), whiteMat);
+    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.034, 0.11, 6, 12), whiteMat);
     leg.position.set(lx, 0.09, lz);
     dog.add(leg);
   });
@@ -1897,9 +2006,7 @@ function resolveDynamicVehicleCollisions(pos, playerRadius) {
 
 let districtExtension=null,districtStreetscape=null,districtLiving=null;
 function buildPhuThuong3DWorld() {
-  const basePlane = new THREE.Mesh(worldUVs(new THREE.PlaneGeometry(1000, 1000).rotateX(-Math.PI / 2), 3), visualMaterials.concrete());
-  basePlane.position.y = -0.05;
-  basePlane.receiveShadow = true;
+  const basePlane = createDistrictTerrain(visualMaterials.terrain());
   worldGroup.add(basePlane);
 
 
@@ -2635,10 +2742,14 @@ function buildUBNDPhuThuongCampus() {
 }
 
 
+const animatedVegetation = [];
+const animatedLanterns = [];
+
 function createLeafyHanoiTree(x, z, height, radius) {
   const tree = createStreetTree(height, radius, barkMat);
   tree.position.set(x, 0.18, z); worldGroup.add(tree);
   addCircleCollider(x, z, 0.55);
+  animatedVegetation.push({ obj: tree, phase: x * 0.28 + z * 0.35, amp: 0.016 });
 }
 
 const houseNumberSprites = [];
@@ -3192,6 +3303,7 @@ function buildExtendedExplorationDistrict() {
     const g = createPottedMarketTree(isKumquat);
     g.position.set(x, 0.18, z); worldGroup.add(g);
     addCircleCollider(x, z, 0.58);
+    animatedVegetation.push({ obj: g, phase: x * 0.33 + z * 0.42, amp: 0.012 });
   }
 
   // ==========================================================================
@@ -3266,6 +3378,7 @@ function buildExtendedExplorationDistrict() {
     lantern.scale.set(1, 1.28, 1);
     lantern.position.set(lx, 4.25, 0.35);
     gateGroup.add(lantern);
+    animatedLanterns.push({ mesh: lantern, phase: lx * 1.2, amp: 0.06 });
   });
 
   // Đặt 4 chậu Quất cảnh Tứ Liên & Đào thế Nhật Tân hai bên cổng chào Chợ Hoa
@@ -3414,6 +3527,7 @@ function buildExtendedExplorationDistrict() {
     );
     hangingLantern.position.set(sx, 3.55 + Math.sin(sx * 0.5) * 0.15, -14.1);
     worldGroup.add(hangingLantern);
+    animatedLanterns.push({ mesh: hangingLantern, phase: sx * 0.5, amp: 0.07 });
   }
 
   // Xe máy của thương lái chở sọt hoa tươi đỗ ở hai đầu Chợ Hoa Quảng Bá
@@ -3723,7 +3837,7 @@ function buildExtendedExplorationDistrict() {
   fountainGroup.add(waterJet);
   addCircleCollider(131.5, 19.8, 2.65);
 
-  animatedWorldProps.push({ type: 'fountain', jet: waterJet, baseY: 3.05 });
+  animatedWorldProps.push({ type: 'fountain', jet: waterJet, baseY: 3.05, waterMat: fountainWaterMat, pool: fountainWater });
   registerWorldInteractable({
     id: 'park_fountain',
     type: 'fountain',
@@ -6135,51 +6249,306 @@ function buildExpandedWorldZones() {
       ringColor: 0xf472b6
     });
   }
+
+  // ==========================================================================
+  // 5. ĐÊ AN DƯƠNG VƯƠNG: HỘI THẢ DIỀU SÁO SÔNG HỒNG (x = 20.0, z = -225.0)
+  // ==========================================================================
+  {
+    const kx = 20.0;
+    const kz = -225.0;
+    const kiteGroup = new THREE.Group();
+    kiteGroup.position.set(kx, getGroundElevationAt(kx, kz), kz);
+
+    for (let i = -2; i <= 2; i++) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 4.2, 8), bambooMat);
+      pole.position.set(i * 2.2, 2.1, -2.2);
+      kiteGroup.add(pole);
+      const flag = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.95, 1.35),
+        new THREE.MeshStandardMaterial({
+          color: i % 2 === 0 ? 0xef4444 : 0xfacc15,
+          emissive: i % 2 === 0 ? 0x991b1b : 0xb45309,
+          emissiveIntensity: 0.35,
+          side: THREE.DoubleSide
+        })
+      );
+      flag.position.set(i * 2.2 + 0.48, 3.35, -2.2);
+      kiteGroup.add(flag);
+    }
+
+    // Cánh Diều Sáo 3D bay lượn trên bầu trời Đê Sông Hồng
+    const skyKite = new THREE.Group();
+    skyKite.position.set(0, 9.5, -3.5);
+    const wing = new THREE.Mesh(
+      new RoundedBoxGeometry(3.4, 0.06, 1.1, 2, 0.02),
+      new THREE.MeshStandardMaterial({ color: 0xf43f5e, emissive: 0xe11d48, emissiveIntensity: 0.45 })
+    );
+    skyKite.add(wing);
+    const flute = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 1.2, 10), bambooMat);
+    flute.rotation.z = Math.PI / 2;
+    flute.position.set(0, 0.16, 0);
+    skyKite.add(flute);
+    kiteGroup.add(skyKite);
+
+    const sign = createNPCLabel('🪁 HỘI THẢ DIỀU SÁO ĐÊ AN DƯƠNG VƯƠNG (Phím E)', '#38bdf8');
+    sign.position.set(0, 3.8, 0);
+    sign.scale.set(4.8, 0.68, 1);
+    kiteGroup.add(sign);
+    worldGroup.add(kiteGroup);
+
+    registerWorldInteractable({
+      id: 'dyke_kite_festival',
+      type: 'dyke_kite',
+      title: 'Bãi Thả Diều Sáo Đê An Dương Vương',
+      prompt: '🪁 Thi Điều Khiển Diều Sáo Đón Gió Sông Hồng (Phím E · Thưởng +50.000đ & +135 XP)',
+      x: kx,
+      y: getGroundElevationAt(kx, kz),
+      z: kz,
+      radius: 4.5,
+      ringColor: 0x38bdf8
+    });
+  }
+
+  // ==========================================================================
+  // 6. BẾN SÔNG HỒNG: ĐÀI VIỄN VỌNG & LỄ HỘI THẢ ĐÈN HOA ĐĂNG (x = 366.0, z = -160.0)
+  // ==========================================================================
+  {
+    const rx = 366.0;
+    const rz = -160.0;
+    const riverGroup = new THREE.Group();
+    riverGroup.position.set(rx, getGroundElevationAt(rx, rz), rz);
+
+    [-2.4, 2.4].forEach((dz) => {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 3.4, 10), redLacquerMat);
+      post.position.set(1.6, 1.7, dz);
+      riverGroup.add(post);
+      const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), lanternGlowMat);
+      lantern.position.set(1.6, 3.1, dz);
+      riverGroup.add(lantern);
+    });
+    const beam = new THREE.Mesh(new RoundedBoxGeometry(0.26, 0.28, 5.4, 2, 0.03), goldMat);
+    beam.position.set(1.6, 3.35, 0);
+    riverGroup.add(beam);
+
+    const sign = createNPCLabel('🏮 BẾN THẢ ĐÈN HOA ĐĂNG SÔNG HỒNG (Phím E)', '#f472b6');
+    sign.position.set(0, 3.85, 0);
+    sign.scale.set(4.8, 0.68, 1);
+    riverGroup.add(sign);
+    worldGroup.add(riverGroup);
+
+    registerWorldInteractable({
+      id: 'river_lantern_pier',
+      type: 'river_lookout',
+      title: 'Bến Thả Đèn Hoa Đăng & Đài Ngắm Sông Hồng',
+      prompt: '🏮 Thả Đèn Hoa Đăng Cầu Bình An Trên Sông Hồng (Phím E · Thưởng +45.000đ & +120 XP)',
+      x: rx,
+      y: getGroundElevationAt(rx, rz),
+      z: rz,
+      radius: 4.6,
+      ringColor: 0xf472b6
+    });
+  }
+
+  // ==========================================================================
+  // 7. CHỢ PHIÊN ĐẦU ĐÔNG: ĐẤU GIÁ & THẨM ĐỊNH ĐẶC SẢN TÂY HỒ (x = 302.0, z = -75.0)
+  // ==========================================================================
+  {
+    const bx = 302.0;
+    const bz = -75.0;
+    const bazGroup = new THREE.Group();
+    bazGroup.position.set(bx, getGroundElevationAt(bx, bz), bz);
+
+    [-2.2, 2.2].forEach((dx) => {
+      const stallPost = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 3.1, 8), bambooMat);
+      stallPost.position.set(dx, 1.55, -1.8);
+      bazGroup.add(stallPost);
+      const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), lanternGlowMat);
+      lantern.position.set(dx, 2.85, -1.8);
+      bazGroup.add(lantern);
+    });
+
+    const sign = createNPCLabel('🧺 CHỢ PHIÊN ĐẶC SẢN ĐẦU ĐÔNG (Phím E)', '#facc15');
+    sign.position.set(0, 3.65, 0);
+    sign.scale.set(4.6, 0.66, 1);
+    bazGroup.add(sign);
+    worldGroup.add(bazGroup);
+
+    registerWorldInteractable({
+      id: 'weekend_bazaar_market',
+      type: 'weekend_bazaar',
+      title: 'Chợ Phiên Nông Sản & Đặc Sản Đầu Đông',
+      prompt: '🧺 Thẩm Định & Buôn Đặc Sản Chợ Phiên Tây Hồ (Phím E · Thưởng +48.000đ & +125 XP)',
+      x: bx,
+      y: getGroundElevationAt(bx, bz),
+      z: bz,
+      radius: 4.6,
+      ringColor: 0xfacc15
+    });
+  }
+
+  // ==========================================================================
+  // 8. QUÁN VƯỜN TRE VEN SÔNG: THƯỞNG TRÀ SEN & ĐỐI THƠ CỔ (x = 267.0, z = -227.0)
+  // ==========================================================================
+  {
+    const tx = 267.0;
+    const tz = -227.0;
+    const teaPavGroup = new THREE.Group();
+    teaPavGroup.position.set(tx, getGroundElevationAt(tx, tz), tz);
+
+    const sign = createNPCLabel('🍵 TRÀ ĐẠO BÁCH DIỆP & ĐỐI THƠ VƯỜN TRE (Phím E)', '#4ade80');
+    sign.position.set(0, 3.7, 0);
+    sign.scale.set(4.8, 0.68, 1);
+    teaPavGroup.add(sign);
+    worldGroup.add(teaPavGroup);
+
+    registerWorldInteractable({
+      id: 'bamboo_tea_poetry',
+      type: 'bamboo_tea',
+      title: 'Quán Trà Sen Vườn Tre Ven Sông',
+      prompt: '🍵 Pha Trà Sen Bách Diệp & Đối Thơ Cổ Nhân (Phím E · +42.000đ, +115 XP & Hồi 100% Thể Lực)',
+      x: tx,
+      y: getGroundElevationAt(tx, tz),
+      z: tz,
+      radius: 4.5,
+      ringColor: 0x4ade80
+    });
+  }
+
+  // ==========================================================================
+  // 9. SÂN ĐÌNH PHÚ XÁ: TRỐNG HỘI ĐÌNH LÀNG (x = -162.0, z = -108.0)
+  // ==========================================================================
+  {
+    const fx = -162.0;
+    const fz = -108.0;
+    const drumGroup = new THREE.Group();
+    drumGroup.position.set(fx, getGroundElevationAt(fx, fz), fz);
+
+    const drumStand = new THREE.Mesh(new RoundedBoxGeometry(1.4, 0.9, 1.1, 2, 0.04), woodMat);
+    drumStand.position.set(0, 0.45, -2.0);
+    drumGroup.add(drumStand);
+    const bigDrum = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.58, 0.95, 18), redLacquerMat);
+    bigDrum.rotation.x = Math.PI / 2;
+    bigDrum.position.set(0, 1.25, -2.0);
+    drumGroup.add(bigDrum);
+
+    const sign = createNPCLabel('🥁 TRỐNG HỘI SÂN ĐÌNH PHÚ XÁ (Phím E)', '#ef4444');
+    sign.position.set(0, 3.65, 0);
+    sign.scale.set(4.5, 0.66, 1);
+    drumGroup.add(sign);
+    worldGroup.add(drumGroup);
+
+    registerWorldInteractable({
+      id: 'phu_xa_drum_festival',
+      type: 'phu_xa_festival',
+      title: 'Sân Trống Hội Đình Làng Phú Xá',
+      prompt: '🥁 Đánh Trống Hội Khai Xuân Đình Phú Xá (Phím E · Thưởng +46.000đ & +125 XP)',
+      x: fx,
+      y: getGroundElevationAt(fx, fz),
+      z: fz,
+      radius: 4.5,
+      ringColor: 0xef4444
+    });
+  }
+
+  // ==========================================================================
+  // 10. VƯỜN ĐÀO MỞ RỘNG PHÍA TÂY: NGHỆ NHÂN TỈA ĐÀO THẾ CỔ THỤ (x = -200.0, z = -37.0)
+  // ==========================================================================
+  {
+    const wx = -200.0;
+    const wz = -37.0;
+    const bonsaiGroup = new THREE.Group();
+    bonsaiGroup.position.set(wx, getGroundElevationAt(wx, wz), wz);
+
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.0, 0.65, 12), goldMat);
+    pedestal.position.set(0, 0.32, -2.0);
+    bonsaiGroup.add(pedestal);
+
+    const sign = createNPCLabel('✂️ NGHỆ NHÂN TỈA ĐÀO THẾ CỔ THỤ (Phím E)', '#f472b6');
+    sign.position.set(0, 3.65, 0);
+    sign.scale.set(4.6, 0.66, 1);
+    bonsaiGroup.add(sign);
+    worldGroup.add(bonsaiGroup);
+
+    registerWorldInteractable({
+      id: 'west_peach_bonsai',
+      type: 'peach_bonsai',
+      title: 'Vườn Nghệ Nhân Tỉa Đào Thế Cổ Thụ',
+      prompt: '✂️ Tạo Dáng Bonsai Đào Bích Tiến Vua (Phím E · Thưởng +44.000đ & +120 XP)',
+      x: wx,
+      y: getGroundElevationAt(wx, wz),
+      z: wz,
+      radius: 4.5,
+      ringColor: 0xf472b6
+    });
+  }
 }
 
 function addTrafficRider(bike, shirtColor = 0x2563eb) {
   const rider = new THREE.Group();
-  const shirt = new THREE.MeshStandardMaterial({ color: shirtColor, roughness: 0.82 });
-  const trousers = new THREE.MeshStandardMaterial({ color: 0x263548, roughness: 0.88 });
-  const skin = new THREE.MeshStandardMaterial({ color: 0xd6a178, roughness: 0.72 });
-  const helmet = new THREE.MeshStandardMaterial({ color: 0x172033, roughness: 0.5, metalness: 0.12 });
+  const shirt = new THREE.MeshStandardMaterial({ color: shirtColor, roughness: 0.78 });
+  const trousers = new THREE.MeshStandardMaterial({ color: 0x263548, roughness: 0.84 });
+  const skin = new THREE.MeshStandardMaterial({ color: 0xd6a178, roughness: 0.55 });
+  const helmet = new THREE.MeshStandardMaterial({ color: 0x172033, roughness: 0.36, metalness: 0.18 });
+  const shoeMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.65 });
+  installHumanOrganicShader(shirt, 'cloth');
+  installHumanOrganicShader(trousers, 'cloth');
+  installHumanOrganicShader(skin, 'skin');
 
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.145, 0.28, 5, 10), shirt);
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.148, 0.28, 10, 18), shirt);
+  torso.scale.set(0.92, 1, 1.08);
   torso.position.set(-0.18, 1.19, 0);
   torso.rotation.z = -0.18;
   torso.castShadow = true;
   rider.add(torso);
 
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.135, 16, 12), skin);
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.026, 10, 18), shirt);
+  collar.rotation.x = Math.PI / 2;
+  collar.position.set(-0.13, 1.38, 0);
+  rider.add(collar);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.135, 22, 16), skin);
+  head.scale.set(0.96, 1.05, 0.94);
   head.position.set(-0.11, 1.55, 0);
   head.castShadow = true;
   rider.add(head);
-  const helmetShell = new THREE.Mesh(new THREE.SphereGeometry(0.145, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.58), helmet);
+
+  const helmetShell = new THREE.Mesh(new THREE.SphereGeometry(0.148, 22, 14, 0, Math.PI * 2, 0, Math.PI * 0.6), helmet);
   helmetShell.position.set(-0.11, 1.58, 0);
   rider.add(helmetShell);
+
+  const visor = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.155, 0.045, 18, 1, true, -Math.PI * 0.35, Math.PI * 0.7), helmet);
+  visor.rotation.y = Math.PI / 2;
+  visor.position.set(-0.04, 1.57, 0);
+  rider.add(visor);
 
   const limbAxis = new THREE.Vector3(0, 1, 0);
   const addLimb = (from, to, radius, material) => {
     const direction = new THREE.Vector3().subVectors(to, from);
-    const limb = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 0.9, direction.length(), 8), material);
+    const len = Math.max(0.02, direction.length() - radius * 1.4);
+    const limb = new THREE.Mesh(new THREE.CapsuleGeometry(radius, len, 8, 14), material);
     limb.position.copy(from).add(to).multiplyScalar(0.5);
     limb.quaternion.setFromUnitVectors(limbAxis, direction.normalize());
     limb.castShadow = true;
     rider.add(limb);
   };
   [-1, 1].forEach((side) => {
-    addLimb(
-      new THREE.Vector3(-0.11, 1.34, side * 0.12),
-      new THREE.Vector3(0.34, 1.12, side * 0.25),
-      0.035,
-      shirt
-    );
-    addLimb(
-      new THREE.Vector3(-0.28, 1.03, side * 0.1),
-      new THREE.Vector3(-0.04, 0.58, side * 0.2),
-      0.052,
-      trousers
-    );
+    const shoulder = new THREE.Vector3(-0.12, 1.34, side * 0.135);
+    const elbow = new THREE.Vector3(0.09, 1.19, side * 0.21);
+    const grip = new THREE.Vector3(0.34, 1.12, side * 0.25);
+    addLimb(shoulder, elbow, 0.042, shirt);
+    addLimb(elbow, grip, 0.034, skin);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.038, 12, 10), skin);
+    hand.position.copy(grip);
+    rider.add(hand);
+
+    const hip = new THREE.Vector3(-0.28, 1.03, side * 0.105);
+    const knee = new THREE.Vector3(-0.05, 0.84, side * 0.19);
+    const ankle = new THREE.Vector3(-0.04, 0.56, side * 0.19);
+    addLimb(hip, knee, 0.056, trousers);
+    addLimb(knee, ankle, 0.046, trousers);
+    const shoe = new THREE.Mesh(new RoundedBoxGeometry(0.16, 0.075, 0.09, 3, 0.025), shoeMat);
+    shoe.position.set(0.01, 0.54, side * 0.19);
+    rider.add(shoe);
   });
   bike.add(rider);
   bike.userData.rider = rider;
@@ -6287,6 +6656,7 @@ const playerState = {
   night: normalizeNight(loadedSnapshot?.night),
   daylife: loadedSnapshot?.daylife,
   arcade: loadedSnapshot?.arcade,
+  teaChess: loadedSnapshot?.teaChess,
   day: loadedSnapshot?.day ?? 1,
   time: loadedSnapshot?.time ?? 9.5
 };
@@ -6444,6 +6814,7 @@ function saveGame() {
     night: { ...playerState.night, battery: storyFlashlightBattery, composure: storyComposure },
     daylife: playerState.daylife,
     arcade: playerState.arcade,
+    teaChess: playerState.teaChess,
     playerPosition: playerGroup.position,
     camYaw,
   };
@@ -6712,6 +7083,51 @@ function hasItem(itemId) {
   return it && it.count > 0;
 }
 
+// Hệ thống Hiệu ứng Thức ăn & Tăng cường RPG (Active Food Buffs & RPG Consumables)
+const playerBuffs = new Map();
+
+function setPlayerBuff(id, cfg) {
+  playerBuffs.set(id, {
+    name: cfg.name,
+    icon: cfg.icon,
+    desc: cfg.desc,
+    timeLeft: cfg.duration,
+    totalDuration: cfg.duration,
+    color: cfg.color || '#f59e0b',
+    glow: cfg.glow || 'rgba(245, 158, 11, 0.45)'
+  });
+  updateBuffsHUD();
+  showToast(`✨ KÍCH HOẠT: ${cfg.name}! ${cfg.desc} (${cfg.duration}s)`);
+}
+
+function hasActiveBuff(id) {
+  return playerBuffs.has(id) && playerBuffs.get(id).timeLeft > 0;
+}
+
+function updateBuffsHUD() {
+  const container = document.getElementById('active-buffs-bar');
+  if (!container) return;
+  if (playerBuffs.size === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  let html = '';
+  playerBuffs.forEach((buff) => {
+    const secs = Math.ceil(buff.timeLeft);
+    html += `<div class="buff-chip" style="--buff-color:${buff.color};--buff-glow:${buff.glow};"><span class="buff-icon">${buff.icon}</span><span>${buff.name}</span><span class="buff-timer">${secs}s</span></div>`;
+  });
+  container.innerHTML = html;
+}
+
+let actionPopupTimer = 0;
+function triggerActionStuntPopup(text) {
+  const el = document.getElementById('stunt-action-popup');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add('show');
+  actionPopupTimer = 2.2;
+}
+
 function consumeItem(itemId) {
   const it = playerState.inventory.get(itemId);
   if (!it || it.count <= 0) return false;
@@ -6724,8 +7140,11 @@ function consumeItem(itemId) {
 
 function addRewards(coinsDelta, xpDelta) {
   const beforeCoins = playerState.coins;
-  playerState.coins = Math.max(0, playerState.coins + coinsDelta);
-  playerState.xp += xpDelta;
+  const buffBonus = hasActiveBuff('kem') ? 1.5 : 1.0;
+  const actualCoins = coinsDelta > 0 ? Math.round(coinsDelta * buffBonus) : coinsDelta;
+  const actualXp = xpDelta > 0 ? Math.round(xpDelta * buffBonus) : xpDelta;
+  playerState.coins = Math.max(0, playerState.coins + actualCoins);
+  playerState.xp += actualXp;
   updatePlayerHUD();
   markProgressDirty();
   if (coinsDelta < 0) {
@@ -6826,9 +7245,27 @@ playerBikeMesh.add(playerHeadlight);
 let isPlayerHeadlightOn = playerState.time >= 18.2;
 let headlightManualOverride = false;
 
+// The spotlight illuminates surfaces; a solid cone washed out the entire FPS view.
+const bikeGroundDecalGeo = new THREE.PlaneGeometry(5.6, 5.6);
+bikeGroundDecalGeo.rotateX(-Math.PI / 2);
+const bikeGroundDecalMat = new THREE.MeshBasicMaterial({
+  color: 0xfff6ce,
+  map: visualMaterials.steamMap,
+  transparent: true,
+  opacity: 0.10,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false
+});
+const bikeGroundDecal = new THREE.Mesh(bikeGroundDecalGeo, bikeGroundDecalMat);
+bikeGroundDecal.position.set(6.8, 0.20, 0);
+bikeGroundDecal.scale.set(1.5, 1, 0.85);
+bikeGroundDecal.visible = isPlayerHeadlightOn;
+playerBikeMesh.add(bikeGroundDecal);
+
 function setPlayerHeadlight(enabled, announce = true) {
   isPlayerHeadlightOn = enabled;
   playerHeadlight.intensity = enabled ? 68 : 0;
+  bikeGroundDecal.visible = enabled;
   const lampMaterial = playerBikeMesh.userData.headlightMesh?.material;
   if (lampMaterial) {
     lampMaterial.emissiveIntensity = enabled ? 3.2 : 0.35;
@@ -7047,6 +7484,61 @@ const SHIPPER_ROUTES = [
       { x: 12, z: 2.0, label: 'Cổng Trường THPT Tây Hồ' },
       { x: -95, z: 2.0, label: 'Đại Lộ Phía Tây' },
       { x: 0, z: -2.8, label: 'Đích Vô Địch: Sân Cờ UBND Phường Phú Thượng' }
+    ]
+  },
+  {
+    id: 'route_red_river_loop',
+    stars: 4,
+    title: '🌊 Đơn 6: Tuyến Vòng Bến Sông Hồng & Vườn Tre',
+    customer: 'Hội Quán Vườn Tre & Đài Ngắm Sông Hồng',
+    desc: 'Giao đặc sản Xôi – Trà Sen từ Chợ Hoa Quảng Bá chạy dọc Đường Ven Công Viên ra Sân Ngắm Sông Hồng và Quán Nghỉ Chân Vườn Tre!',
+    baseCoins: 95000,
+    baseXp: 265,
+    timeLimit: 54,
+    checkpoints: [
+      { x: 135, z: -1.5, label: 'Xuất Phát: Cổng Chợ Hoa Quảng Bá' },
+      { x: 185, z: -1.5, label: 'Đường Ven Công Viên Phía Đông' },
+      { x: 235, z: -40.0, label: 'Lối Lên Đê Sông Hồng' },
+      { x: 300, z: -72.0, label: 'Chợ Phiên Đầu Đông' },
+      { x: 345, z: -158.0, label: 'Đường Dạo Ven Sông Hồng' },
+      { x: 365, z: -160.0, label: 'Đài Viễn Vọng & Sân Ngắm Sông' },
+      { x: 268, z: -225.0, label: 'Đích: Quán Nghỉ Chân Vườn Tre' }
+    ]
+  },
+  {
+    id: 'route_dyke_express',
+    stars: 5,
+    title: '🪁 Đơn 7: Siêu Tốc Đê An Dương Vương – Sân Đình Phú Xá',
+    customer: 'Ban Tổ Chức Lễ Hội Thả Diều & Đình Phú Xá',
+    desc: 'Phóng tốc độ tối đa trên mặt Đê An Dương Vương lộng gió, giao trống hội và diều sáo từ Phú Gia qua Bãi Thả Diều về Sân Cuối Phố Phú Xá!',
+    baseCoins: 115000,
+    baseXp: 310,
+    timeLimit: 55,
+    checkpoints: [
+      { x: 42, z: -65.0, label: 'Xuất Phát: Phố Phú Gia' },
+      { x: 42, z: -155.0, label: 'Dốc Lên Đê Phú Gia' },
+      { x: 42, z: -225.0, label: 'Nút Giao Đê An Dương Vương' },
+      { x: 20, z: -225.0, label: 'Bãi Thả Diều Sáo Đê Sông Hồng' },
+      { x: -80, z: -225.0, label: 'Đê An Dương Vương Phía Tây' },
+      { x: -162, z: -225.0, label: 'Đầu Dốc Phố Phú Xá' },
+      { x: -162, z: -108.0, label: 'Đích: Sân Trống Hội Đình Phú Xá' }
+    ]
+  },
+  {
+    id: 'route_west_garden_tour',
+    stars: 4,
+    title: '✂️ Đơn 8: Chuyến Hàng Nghệ Nhân Đào Thế Khu Mở Rộng',
+    customer: 'Hội Nghệ Nhân Bonsai Đào Phú Thượng',
+    desc: 'Vận chuyển bộ dụng cụ tỉa đào và chậu gốm cổ từ Ngõ 41 qua Xóm Nam Phú Thượng tới thẳng Vườn Đào Khu Mở Rộng Phía Tây!',
+    baseCoins: 90000,
+    baseXp: 250,
+    timeLimit: 52,
+    checkpoints: [
+      { x: -67, z: -2.0, label: 'Xuất Phát: Cổng Ngõ 41 Phú Thượng' },
+      { x: -120, z: 2.0, label: 'Phố Phú Thượng Phía Tây' },
+      { x: -162, z: -10.0, label: 'Ngã Tư Cổng Làng – Phú Xá' },
+      { x: -162, z: -37.0, label: 'Lối Rẽ Đường Vườn Đào Mở Rộng' },
+      { x: -200, z: -37.0, label: 'Đích: Vườn Nghệ Nhân Tỉa Đào Thế Cổ Thụ' }
     ]
   }
 ];
@@ -7443,6 +7935,92 @@ let isShipperModalOpen = false;
 let activeShipperTab = 'orders';
 let stuntBannerTimer = 0;
 const nearMissCooldownMap = new Map();
+
+// Hệ thống Hạt Khói Lốp & Vệt Lết Drift Xe Máy (3D Drift Tire Smoke Particle Pool)
+const driftSmokePool = [];
+const driftSmokeGeo = new THREE.SphereGeometry(0.24, 8, 6);
+const driftSmokeMat = new THREE.MeshBasicMaterial({
+  color: 0xdddddd,
+  transparent: true,
+  opacity: 0.35,
+  depthWrite: false
+});
+for (let i = 0; i < 20; i++) {
+  const sm = new THREE.Mesh(driftSmokeGeo, driftSmokeMat.clone());
+  sm.visible = false;
+  scene.add(sm);
+  driftSmokePool.push({ mesh: sm, life: 0 });
+}
+
+function spawnDriftSmoke(pos, heading) {
+  const p = driftSmokePool.find((item) => item.life <= 0);
+  if (!p) return;
+  p.mesh.position.set(
+    pos.x - Math.sin(heading) * 0.7 + (Math.random() - 0.5) * 0.25,
+    0.22,
+    pos.z - Math.cos(heading) * 0.7 + (Math.random() - 0.5) * 0.25
+  );
+  p.mesh.scale.setScalar(0.65 + Math.random() * 0.45);
+  p.mesh.material.opacity = 0.38;
+  p.mesh.visible = true;
+  p.life = 0.48;
+}
+
+let isBikeDrifting = false;
+let bikeDriftScore = 0;
+
+// Hệ thống Quét Radar "Trực Giác Phú Thượng" (Eagle-Vision / Cultural Sonar Scanner)
+const sonarMesh = new THREE.Mesh(
+  new THREE.RingGeometry(0.5, 1.8, 48).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })
+);
+sonarMesh.position.y = 0.22;
+sonarMesh.visible = false;
+scene.add(sonarMesh);
+let sonarTimer = 0;
+
+function triggerCulturalSonarScan() {
+  sonarTimer = 1.4;
+  sonarMesh.position.set(playerGroup.position.x, 0.22, playerGroup.position.z);
+  sonarMesh.scale.set(1, 1, 1);
+  sonarMesh.material.opacity = 0.85;
+  sonarMesh.visible = true;
+
+  if (audioCtx) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const now = audioCtx.currentTime;
+    [523.25, 659.25, 783.99, 1046.5].forEach((freq, idx) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+      gain.gain.setValueAtTime(0.08, now + idx * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.85);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now + idx * 0.08);
+      osc.stop(now + idx * 0.08 + 0.85);
+    });
+  }
+
+  const radarEl = document.getElementById('sonar-hud-radar');
+  if (radarEl) {
+    radarEl.classList.add('active');
+    setTimeout(() => radarEl.classList.remove('active'), 1200);
+  }
+
+  const spots = [
+    { title: 'Chợ Hoa Quảng Bá', x: 135, z: -18 },
+    { title: 'Công Viên Phú Thượng', x: 134, z: 24 },
+    { title: 'Đình Phú Gia', x: -45, z: 22 },
+    { title: 'Cổng 41 & Trường THPT Tây Hồ', x: -2, z: 8 },
+    { title: 'Quán Trà Đá Cô Hoa', x: -52.5, z: -5.6 },
+    { title: 'Gánh Xôi Phú Thượng', x: -10.5, z: 6.2 },
+    { title: 'Xưởng Xe & Kiot Dịch Vụ', x: 28, z: -8 }
+  ];
+  const detected = spots.filter(s => Math.hypot(playerGroup.position.x - s.x, playerGroup.position.z - s.z) < 65);
+  showToast(`🔔 TRỰC GIÁC PHÚ THƯỢNG: Phát hiện ${detected.length} điểm văn hóa & di sản gần bạn! [${detected.map(d=>d.title).join(', ')}]`, 4500);
+}
 
 // Cổng Vòng Sáng Checkpoint 3D cho chế độ Shipper Siêu Tốc
 const shipperCheckpointGroup = new THREE.Group();
@@ -8302,21 +8880,127 @@ function resolveActiveStreetEvent() {
   if (!activeStreetEvent) return;
   const tpl = activeStreetEvent.template;
   const outfitBonus = garageState.equippedOutfit === 'outfit_tycoon' ? 1.25 : 1.0;
-  const coins = Math.round(tpl.rewardCoins * outfitBonus);
-  const xp = Math.round(tpl.rewardXp * (garageState.equippedOutfit === 'outfit_heritage' ? 1.25 : 1.0));
+  const xpMult = garageState.equippedOutfit === 'outfit_heritage' ? 1.25 : 1.0;
 
-  garageState.stats.streetEventsResolved = (garageState.stats.streetEventsResolved || 0) + 1;
-  saveGarageState();
+  if (isShipperModalOpen) closeShipperModal();
+  if (activeMiniGameTimer) clearInterval(activeMiniGameTimer);
 
-  activeStreetEvent = null;
-  streetEventGroup.visible = false;
-  document.getElementById('street-event-banner')?.classList.add('hidden');
+  isParkMiniGameOpen = true;
+  isDialogueOpen = true;
+  if (document.pointerLockElement) document.exitPointerLock?.();
 
-  addRewards(coins, xp);
-  awardSocialProgress({ neighborhood: { cohesion: 5, beauty: 3, livelihood: 3 } });
-  playSoundEffect('quest');
-  triggerStuntBanner(`🚨 HOÀN THÀNH SỰ KIỆN! +${coins.toLocaleString('vi-VN')}đ · +${xp} XP`);
-  showToast(`${tpl.toastDone} (+${coins.toLocaleString('vi-VN')}đ, +${xp} XP)`, 6000);
+  const modal = document.getElementById('park-minigame-modal');
+  const titleEl = document.getElementById('park-mg-title');
+  const bodyEl = document.getElementById('park-mg-body');
+
+  const finishRescue = (bonusMult = 1.0, extraMsg = '') => {
+    closeParkMiniGame();
+    if (!activeStreetEvent) return;
+    const coins = Math.round(tpl.rewardCoins * outfitBonus * bonusMult);
+    const xp = Math.round(tpl.rewardXp * xpMult * bonusMult);
+    garageState.stats.streetEventsResolved = (garageState.stats.streetEventsResolved || 0) + 1;
+    saveGarageState();
+    activeStreetEvent = null;
+    streetEventGroup.visible = false;
+    document.getElementById('street-event-banner')?.classList.add('hidden');
+    addRewards(coins, xp);
+    awardSocialProgress({ neighborhood: { cohesion: 5, beauty: 3, livelihood: 3 } });
+    playSoundEffect('quest');
+    triggerStuntBanner(`🚨 CỨU HỘ XUẤT SẮC! +${coins.toLocaleString('vi-VN')}đ · +${xp} XP`);
+    showToast(`${tpl.toastDone} ${extraMsg}(+${coins.toLocaleString('vi-VN')}đ, +${xp} XP)`, 6000);
+  };
+
+  if (!modal || !titleEl || !bodyEl) {
+    finishRescue(1.0);
+    return;
+  }
+
+  titleEl.textContent = `🚨 Tác Nghiệp Hiện Trường: ${tpl.title}`;
+
+  if (tpl.id === 'broken_bike') {
+    let step = 0;
+    const steps = [
+      { btn: '🔧 Bước 1: Dựng Chân Chống & Căng Lại Xích Tải', msg: 'Bác nông dân đang giữ yên cành đào Nhật Tân. Hãy căn chỉnh lại mắt xích bị trật!' },
+      { btn: '🛢️ Bước 2: Tra Dầu Nhớt & Siết Ốc Tăng Xích', msg: 'Xích đã vào rãnh đĩa! Hãy tra dầu bôi trơn và khóa chặt ốc trục sau.' },
+      { btn: '⚡ Bước 3: Đạp Nổ Máy Kiểm Tra Tiếng Pô', msg: 'Mọi thứ đã khớp hoàn hảo! Đạp cần khởi động để bàn giao xe cho bác nông dân!' }
+    ];
+    const renderBikeFix = () => {
+      const cur = steps[step];
+      bodyEl.innerHTML = `
+        <div class="mg-stage-box">
+          <div class="mg-status-line">${cur.msg}</div>
+          <div class="mg-meter-wrap" style="height:22px;">
+            <div style="height:100%; width:${Math.round((step / 3) * 100)}%; background:linear-gradient(90deg,#f59e0b,#10b981); border-radius:999px; transition:width 0.25s;"></div>
+          </div>
+          <div style="font-size:13px; color:#fde047;">Tiến độ sửa chữa: <strong>${step}/3 công đoạn</strong></div>
+          <div class="mg-big-action">
+            <button type="button" id="ev-fix-step-btn" class="choice-btn primary">${cur.btn}</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('ev-fix-step-btn')?.addEventListener('click', () => {
+        step += 1;
+        playSoundEffect('coin');
+        if (step >= 3) finishRescue(1.3, '· Thưởng Tay Nghề Vàng +30% ');
+        else renderBikeFix();
+      });
+    };
+    renderBikeFix();
+    modal.classList.remove('hidden');
+    return;
+  }
+
+  // Mini-game căn nhịp chuẩn xác cho Giải cứu Mèo Vàng / Dìu Cụ Già / Khống Chế Kẻ Gian
+  let needlePos = 12;
+  let needleDir = 1;
+  let hits = 0;
+  const needed = 2;
+  const actionLabel = tpl.id === 'lost_cat'
+    ? '🐱 NHỬ CÁ THƠM & BẾ MÈO VÀNG VÀO LỀ!'
+    : tpl.id === 'elder_cross'
+      ? '🛑 GIƠ TAY XIN ĐƯỜNG & DÌU CỤ QUA PHỐ!'
+      : '🥋 ÁP SÁT KHỐNG CHẾ & THU HỒI TÚI XÁCH!';
+
+  const renderRescueTiming = (msg = 'Canh thanh nhịp điệu chạy vào Vùng Xanh Vàng ở giữa rồi bấm nút để xử lý chuẩn xác (2 nhịp)!') => {
+    bodyEl.innerHTML = `
+      <div class="mg-stage-box">
+        <div class="mg-status-line">${msg}</div>
+        <div class="mg-meter-wrap">
+          <div class="mg-sweet-spot" style="left: 32%; width: 36%;"></div>
+          <div class="mg-cursor-needle" id="ev-rescue-needle" style="left: ${needlePos}%;"></div>
+        </div>
+        <div style="font-size:13.5px; color:#86efac;">Nhịp phối hợp thành công: <strong>${hits}/${needed}</strong></div>
+        <div class="mg-big-action">
+          <button type="button" id="ev-rescue-act-btn" class="choice-btn primary">${actionLabel}</button>
+        </div>
+      </div>
+    `;
+    document.getElementById('ev-rescue-act-btn')?.addEventListener('click', () => {
+      if (Math.abs(needlePos - 50) <= 22) {
+        hits += 1;
+        playSoundEffect('coin');
+        if (hits >= needed) {
+          finishRescue(1.3, '· Phối Hợp Hoàn Hảo +30% ');
+        } else {
+          renderRescueTiming('🔥 Tuyệt vời (1/2)! Canh thêm 1 nhịp chuẩn nữa để hoàn tất cứu hộ!');
+        }
+      } else {
+        playSoundEffect('shutter');
+        renderRescueTiming('😅 Hơi lệch nhịp một chút! Hãy canh lúc kim chạy vào vùng sáng ở giữa nhé!');
+      }
+    });
+  };
+
+  renderRescueTiming();
+  modal.classList.remove('hidden');
+  activeMiniGameTimer = setInterval(() => {
+    if (!isParkMiniGameOpen) return;
+    needlePos += needleDir * 3.8;
+    if (needlePos >= 95) { needlePos = 95; needleDir = -1; }
+    else if (needlePos <= 5) { needlePos = 5; needleDir = 1; }
+    const el = document.getElementById('ev-rescue-needle');
+    if (el) el.style.left = `${needlePos}%`;
+  }, 30);
 }
 
 // ============================================================================
@@ -8531,6 +9215,307 @@ const TYCOON_MENU_ITEMS = [
   { id: 'huong_duong', icon: '🌻', label: 'Đĩa Hướng Dương Rang Củi' }
 ];
 
+function openExpandedDistrictMiniGame(mode) {
+  if (!requireWorldActivity(mode)) return;
+  if (isShipperModalOpen) closeShipperModal();
+  if (activeMiniGameTimer) clearInterval(activeMiniGameTimer);
+
+  isParkMiniGameOpen = true;
+  isDialogueOpen = true;
+  if (document.pointerLockElement) document.exitPointerLock?.();
+
+  const modal = document.getElementById('park-minigame-modal');
+  const titleEl = document.getElementById('park-mg-title');
+  const bodyEl = document.getElementById('park-mg-body');
+  if (!modal || !titleEl || !bodyEl) return;
+
+  const outfitBonus = garageState.equippedOutfit === 'outfit_tycoon' ? 1.25 : 1.0;
+
+  if (mode === 'dyke_kite') {
+    titleEl.textContent = '🪁 Hội Thả Diều Sáo Trên Đê An Dương Vương';
+    let kitePos = 50;
+    let windVel = 2.6;
+    let score = 0;
+    const renderKite = (msg = 'Gió Sông Hồng đang thổi mạnh! Bấm "Giật Dây Căng Cánh" khi Diều Sáo lướt vào Vùng Gió Vàng (32% - 68%) để tiếng sáo ngân vang!') => {
+      bodyEl.innerHTML = `
+        <div class="mg-stage-box">
+          <div class="mg-status-line">${msg}</div>
+          <div class="mg-meter-wrap">
+            <div class="mg-sweet-spot" style="left: 32%; width: 36%;"></div>
+            <div class="mg-cursor-needle" id="kite-needle" style="left: ${kitePos}%;"></div>
+          </div>
+          <div style="display:flex; justify-content:center; gap:18px; font-size:14px;">
+            <span>🪁 Độ cao Diều Sáo: <strong style="color:#38bdf8;">${score}/3 tầng mây</strong></span>
+            <span>💰 Thưởng lễ hội: <strong style="color:#fde047;">+${Math.round(50000 * outfitBonus).toLocaleString('vi-VN')}đ & +135 XP</strong></span>
+          </div>
+          <div class="mg-big-action">
+            <button type="button" id="kite-pull-btn" class="choice-btn primary">🪁 GIẬT DÂY ĐÓN GIÓ SÔNG HỒNG!</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('kite-pull-btn')?.addEventListener('click', () => {
+        if (kitePos >= 30 && kitePos <= 70) {
+          score += 1;
+          playSoundEffect('coin');
+          if (score >= 3) {
+            clearInterval(activeMiniGameTimer);
+            const reward = Math.round(50000 * outfitBonus);
+            addRewards(reward, 135);
+            awardSocialProgress({ neighborhood: { heritage: 4, cohesion: 3 } });
+            closeParkMiniGame();
+            triggerStuntBanner(`🪁 DIỀU SÁO VƯỢT TẦNG MÂY! +${reward.toLocaleString('vi-VN')}đ · +135 XP`);
+            showToast(`🪁 Tiếng sáo diều Phú Thượng ngân vang khắp Đê An Dương Vương! Nhận +${reward.toLocaleString('vi-VN')}đ & +135 XP!`, 5000);
+          } else {
+            renderKite(`✨ Tuyệt vời! Cánh diều vút lên tầng mây ${score}/3, tiếng sáo trầm bổng! Canh tiếp nhịp nữa!`);
+          }
+        } else {
+          playSoundEffect('shutter');
+          renderKite('💨 Gió tạt lệch cánh diều rồi! Hãy đợi kim chỉ đúng vùng xanh vàng ở giữa nhé!');
+        }
+      });
+    };
+    renderKite();
+    modal.classList.remove('hidden');
+    activeMiniGameTimer = setInterval(() => {
+      if (!isParkMiniGameOpen) return;
+      kitePos += windVel;
+      if (kitePos >= 94) { kitePos = 94; windVel = -(2.6 + score * 0.65); }
+      else if (kitePos <= 6) { kitePos = 6; windVel = 2.6 + score * 0.65; }
+      const n = document.getElementById('kite-needle');
+      if (n) n.style.left = `${kitePos}%`;
+    }, 30);
+    return;
+  }
+
+  if (mode === 'river_lookout') {
+    titleEl.textContent = '🏮 Bến Thả Đèn Hoa Đăng & Đài Ngắm Sông Hồng';
+    const wishes = [
+      { icon: '🏮', title: 'Hoa Đăng Bình An & Sum Vầy', desc: 'Cầu chúc mọi gia đình khu phố Phú Thượng bình an, ấm no bên dòng Sông Hồng.', stat: 'cohesion' },
+      { icon: '🌾', title: 'Hoa Đăng Thịnh Vượng Làng Nghề', desc: 'Cầu cho nghề Xôi Phú Thượng & Vườn Đào Nhật Tân - Phú Thượng luôn rực lửa đỏ.', stat: 'livelihood' },
+      { icon: '🌸', title: 'Hoa Đăng Di Sản Nghìn Năm', desc: 'Gìn giữ nét đẹp truyền thống Đình Phú Gia, Chùa Bà Già và văn hóa ven sông.', stat: 'heritage' }
+    ];
+    bodyEl.innerHTML = `
+      <div class="mg-stage-box" style="text-align:left;">
+        <div class="mg-status-line" style="text-align:center;">🌊 Chọn một ngọn Đèn Hoa Đăng Sen Hồng để thắp nến và thả trôi theo dòng nước Sông Hồng:</div>
+        <div style="display:grid; gap:10px; margin-top:10px;">
+          ${wishes.map((w, idx) => `
+            <button type="button" class="choice-btn lantern-wish-btn" data-idx="${idx}" style="text-align:left; padding:12px 14px; display:flex; flex-direction:column; gap:4px;">
+              <strong style="font-size:15px; color:#fde047;">${w.icon} ${w.title}</strong>
+              <span style="font-size:12.5px; color:#cbd5e1;">${w.desc}</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    modal.classList.remove('hidden');
+    bodyEl.querySelectorAll('.lantern-wish-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const w = wishes[Number(btn.dataset.idx) || 0];
+        const reward = Math.round(45000 * outfitBonus);
+        playerState.stamina = 100;
+        addRewards(reward, 120);
+        awardSocialProgress({ neighborhood: { [w.stat]: 5, beauty: 3 } });
+        playSoundEffect('relic');
+        closeParkMiniGame();
+        triggerStuntBanner(`🏮 HOA ĐĂNG SÔNG HỒNG! +${reward.toLocaleString('vi-VN')}đ · +120 XP`);
+        showToast(`🏮 Bạn đã thả "${w.title}" lung linh trên mặt nước Sông Hồng! Hồi 100% Thể lực, +${reward.toLocaleString('vi-VN')}đ & +120 XP!`, 5200);
+      });
+    });
+    return;
+  }
+
+  if (mode === 'weekend_bazaar') {
+    titleEl.textContent = '🧺 Hội Chợ Phiên Nông Sản & Đặc Sản Đầu Đông';
+    const items = [
+      { name: '🍵 Trà Búp Sen Bách Diệp Hồ Tây (Hàng Tuyển)', rightPrice: '45.000đ', wrongPrice: '150.000đ', desc: 'Ướp trong bông sen hồng trăm cánh hái lúc bình minh.' },
+      { name: '🌾 Gạo Nếp Cái Hoa Vàng Phú Thượng Đầu Mùa', rightPrice: '38.000đ', wrongPrice: '120.000đ', desc: 'Hạt tròn căng bóng, đồ xôi dẻo thơm nức mũi.' },
+      { name: '🍊 Bưởi Đào Phú Thượng & Cốm Non Làng Vòng', rightPrice: '50.000đ', wrongPrice: '180.000đ', desc: 'Món quà thu đông thanh tao của đất kinh kỳ.' }
+    ];
+    let step = 0;
+    const renderBazaar = (feedback = 'Hãy chọn mức giá thu mua chuẩn xác của người sành chợ Tây Hồ để gom trọn lô hàng đặc sản!') => {
+      const it = items[step];
+      bodyEl.innerHTML = `
+        <div class="mg-stage-box">
+          <div class="mg-status-line">${feedback}</div>
+          <div style="background:rgba(15,23,42,0.85); border:1px solid #facc15; border-radius:12px; padding:14px; margin:8px 0;">
+            <div style="font-size:12px; color:#93c5fd;">SẠP HÀNG ${step + 1}/${items.length} TẠI CHỢ PHIÊN ĐẦU ĐÔNG</div>
+            <div style="font-size:17px; font-weight:900; color:#fde047; margin:4px 0;">${it.name}</div>
+            <div style="font-size:13px; color:#e2e8f0;">${it.desc}</div>
+          </div>
+          <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+            <button type="button" id="baz-good-btn" class="choice-btn primary" style="padding:10px 18px;">🤝 Chốt Giá Chuẩn Quê Hương (${it.rightPrice})</button>
+            <button type="button" id="baz-bad-btn" class="choice-btn" style="padding:10px 18px;">💸 Mua Giá Hớ Du Khách (${it.wrongPrice})</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('baz-good-btn')?.addEventListener('click', () => {
+        step += 1;
+        playSoundEffect('coin');
+        if (step >= items.length) {
+          const reward = Math.round(48000 * outfitBonus);
+          addRewards(reward, 125);
+          awardSocialProgress({ neighborhood: { livelihood: 5, cohesion: 3 } });
+          closeParkMiniGame();
+          triggerStuntBanner(`🧺 THƯƠNG GIA CHỢ PHIÊN! +${reward.toLocaleString('vi-VN')}đ · +125 XP`);
+          showToast(`🧺 Bạn đã thẩm định & thu mua thành công cả 3 lô đặc sản Chợ Phiên Đầu Đông! Lãi ròng +${reward.toLocaleString('vi-VN')}đ & +125 XP!`, 5200);
+        } else {
+          renderBazaar(`✅ Chuẩn giá sành sỏi! Bà con tiểu thương tấm tắc khen ngợi (${step}/${items.length})!`);
+        }
+      });
+      document.getElementById('baz-bad-btn')?.addEventListener('click', () => {
+        playSoundEffect('shutter');
+        renderBazaar('😅 Giá đó bị hớ rồi! Hãy chọn mức giá hợp lý của người dân bản địa nhé!');
+      });
+    };
+    renderBazaar();
+    modal.classList.remove('hidden');
+    return;
+  }
+
+  if (mode === 'bamboo_tea') {
+    titleEl.textContent = '🍵 Thưởng Trà Sen & Đối Thơ Dưới Giàn Tre Ven Sông';
+    const verses = [
+      { prompt: '“Gió đưa cành trúc la đà / Tiếng chuông Trấn Vũ…”', ans: '“…canh gà Thọ Xương”', wrong: '“…chợ chiều Quảng An”' },
+      { prompt: '“Phú Thượng nếp cái hoa vàng / Đồ xôi hai lửa…”', ans: '“…thơm lừng phố xưa”', wrong: '“…bán về phương xa”' }
+    ];
+    let step = 0;
+    const renderTea = (msg = 'Chọn câu thơ đối chuẩn xác để cùng các bậc cao niên thưởng chén Trà Sen Bách Diệp dưới rặng tre mát rượi:') => {
+      const v = verses[step];
+      bodyEl.innerHTML = `
+        <div class="mg-stage-box">
+          <div class="mg-status-line">${msg}</div>
+          <div style="background:rgba(20,40,32,0.9); border:1px solid #4ade80; border-radius:12px; padding:16px; margin:10px 0;">
+            <div style="font-size:12px; color:#86efac;">🍵 TUẦN TRÀ THỨ ${step + 1}/${verses.length}</div>
+            <div style="font-size:17px; font-weight:800; color:#fef08a; margin-top:6px;">${v.prompt}</div>
+          </div>
+          <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+            <button type="button" id="tea-ans-ok" class="choice-btn primary" style="padding:10px 18px;">📜 ${v.ans}</button>
+            <button type="button" id="tea-ans-no" class="choice-btn" style="padding:10px 18px;">📜 ${v.wrong}</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('tea-ans-ok')?.addEventListener('click', () => {
+        step += 1;
+        playSoundEffect('coin');
+        if (step >= verses.length) {
+          const reward = Math.round(42000 * outfitBonus);
+          playerState.stamina = 100;
+          setPlayerBuff('kem', {
+            name: 'Hương Trà Sen Vườn Tre',
+            icon: '🍵',
+            desc: '+50% Tiền & XP mọi hoạt động',
+            duration: 90,
+            color: '#4ade80',
+            glow: 'rgba(74, 222, 128, 0.45)'
+          });
+          addRewards(reward, 115);
+          awardSocialProgress({ neighborhood: { heritage: 4, cohesion: 4 } });
+          closeParkMiniGame();
+          triggerStuntBanner(`🍵 TRI KỶ VƯỜN TRE! +${reward.toLocaleString('vi-VN')}đ · +115 XP`);
+          showToast(`🍵 Đối thơ xuất sắc! Bạn được thưởng chén Trà Sen Thượng Hạng (Buff +50% Thưởng trong 90s, hồi 100% Thể lực, +${reward.toLocaleString('vi-VN')}đ)!`, 5400);
+        } else {
+          renderTea('✨ Câu đối tuyệt妙! Mời nâng chén trà thứ hai!');
+        }
+      });
+      document.getElementById('tea-ans-no')?.addEventListener('click', () => {
+        playSoundEffect('shutter');
+        renderTea('😅 Chưa đúng vần điệu ca dao cổ rồi, hãy chọn vế đối còn lại nhé!');
+      });
+    };
+    renderTea();
+    modal.classList.remove('hidden');
+    return;
+  }
+
+  if (mode === 'phu_xa_festival') {
+    titleEl.textContent = '🥁 Trống Hội Khai Xuân Sân Đình Phú Xá';
+    let hits = 0;
+    let drumPos = 20;
+    let drumDir = 1;
+    const renderDrum = (msg = 'Canh dùi trống rơi đúng Tâm Mặt Trống Đỏ (35% - 65%) để gióng hồi Trống Hội Đình Làng Phú Xá!') => {
+      bodyEl.innerHTML = `
+        <div class="mg-stage-box">
+          <div class="mg-status-line">${msg}</div>
+          <div class="mg-meter-wrap">
+            <div class="mg-sweet-spot" style="left: 35%; width: 30%;"></div>
+            <div class="mg-cursor-needle" id="drum-needle" style="left: ${drumPos}%;"></div>
+          </div>
+          <div style="font-size:14px; color:#fde047;">🥁 Nhịp trống chuẩn xác: <strong>${hits}/3 hồi trống</strong></div>
+          <div class="mg-big-action">
+            <button type="button" id="drum-hit-btn" class="choice-btn primary">🥁 GIÓNG HỒI TRỐNG ĐÌNH LÀNG (TÙNG! TÙNG! TÙNG!)</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('drum-hit-btn')?.addEventListener('click', () => {
+        if (drumPos >= 32 && drumPos <= 68) {
+          hits += 1;
+          playSoundEffect('coin');
+          if (hits >= 3) {
+            clearInterval(activeMiniGameTimer);
+            const reward = Math.round(46000 * outfitBonus);
+            addRewards(reward, 125);
+            awardSocialProgress({ neighborhood: { cohesion: 5, heritage: 4 } });
+            closeParkMiniGame();
+            triggerStuntBanner(`🥁 Hào Khí Đình Phú Xá! +${reward.toLocaleString('vi-VN')}đ · +125 XP`);
+            showToast(`🥁 Hồi trống hội vang rền khắp Sân Đình Phú Xá! Bà con vỗ tay tán thưởng (+${reward.toLocaleString('vi-VN')}đ & +125 XP)!`, 5200);
+          } else {
+            renderDrum(`🔥 TÙNG! Tiếng trống vang dội (${hits}/3)! Tiếp tục giữ nhịp!`);
+          }
+        } else {
+          playSoundEffect('shutter');
+          renderDrum('⚠️ Gõ lệch tang trống rồi! Hãy đợi thanh kim vào giữa mặt trống nhé!');
+        }
+      });
+    };
+    renderDrum();
+    modal.classList.remove('hidden');
+    activeMiniGameTimer = setInterval(() => {
+      if (!isParkMiniGameOpen) return;
+      drumPos += drumDir * (3.2 + hits * 0.7);
+      if (drumPos >= 94) { drumPos = 94; drumDir = -1; }
+      else if (drumPos <= 6) { drumPos = 6; drumDir = 1; }
+      const n = document.getElementById('drum-needle');
+      if (n) n.style.left = `${drumPos}%`;
+    }, 30);
+    return;
+  }
+
+  if (mode === 'peach_bonsai') {
+    titleEl.textContent = '✂️ Nghệ Nhân Tỉa Thế Đào Bích Cổ Thụ Khu Mở Rộng';
+    const styles = [
+      { icon: '🐉', name: 'Thế Long Giáng (Rồng Bay Xuống Đất)', desc: 'Dáng cành uốn lượn uy nghi, nụ đào bích nở đều đón lộc đầu xuân.' },
+      { icon: '👑', name: 'Thế Ngũ Phúc Lâm Môn (5 Tầng Tán Cổ)', desc: 'Năm nhánh đào hội tụ tượng trưng cho Phú - Quý - Thọ - Khang - Ninh.' },
+      { icon: '🦢', name: 'Thế Phụ Tử Tương Tùy (Hai Thân Hòa Quyện)', desc: 'Gốc đào cổ thụ gắn kết tình thân gia đình bền chặt.' }
+    ];
+    bodyEl.innerHTML = `
+      <div class="mg-stage-box" style="text-align:left;">
+        <div class="mg-status-line" style="text-align:center;">✂️ Chọn dáng thế nghệ thuật để tỉa cành và uốn nụ cho gốc Đào Bích Cổ Thụ Phú Thượng:</div>
+        <div style="display:grid; gap:10px; margin-top:10px;">
+          ${styles.map((st, idx) => `
+            <button type="button" class="choice-btn bonsai-style-btn" data-idx="${idx}" style="text-align:left; padding:12px 14px; display:flex; flex-direction:column; gap:4px;">
+              <strong style="font-size:15px; color:#f472b6;">${st.icon} ${st.name}</strong>
+              <span style="font-size:12.5px; color:#cbd5e1;">${st.desc}</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    modal.classList.remove('hidden');
+    bodyEl.querySelectorAll('.bonsai-style-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const st = styles[Number(btn.dataset.idx) || 0];
+        const reward = Math.round(44000 * outfitBonus);
+        addRewards(reward, 120);
+        awardSocialProgress({ neighborhood: { beauty: 5, livelihood: 4, heritage: 3 } });
+        playSoundEffect('quest');
+        closeParkMiniGame();
+        triggerStuntBanner(`🌸 NGHỆ NHÂN ĐÀO THẾ! +${reward.toLocaleString('vi-VN')}đ · +120 XP`);
+        showToast(`🌸 Bạn đã hoàn tác phẩm bonsai "${st.name}" tuyệt đẹp! Thương lái đặt mua ngay với thưởng +${reward.toLocaleString('vi-VN')}đ & +120 XP!`, 5200);
+      });
+    });
+  }
+}
+
 function openTycoonRushMiniGame() {
   if(!requireStreetService('business'))return;
   if (horrorModeActive) return;
@@ -8734,7 +9719,12 @@ function renderShipperModalContent() {
   tabs.forEach((tKey) => {
     const btn = document.getElementById(`tab-btn-${tKey}`);
     const panel = document.getElementById(`shipper-tab-${tKey}`);
-    if (btn) {btn.classList.toggle('active', activeShipperTab === tKey);const access=serviceAccess(tKey,serviceContext());btn.disabled=!access.ok;btn.title=access.ok?'':access.reason;}
+    if (btn) {
+      btn.classList.toggle('active', activeShipperTab === tKey);
+      const access = serviceAccess(tKey, serviceContext());
+      btn.disabled = false;
+      btn.title = access.ok ? '' : `📍 ${access.reason} (Đang xem trước · Nhấn để dẫn đường tới điểm)`;
+    }
     if (panel) panel.classList.toggle('hidden', activeShipperTab !== tKey);
   });
 
@@ -8791,6 +9781,7 @@ function renderShipperModalContent() {
         </button>
       `;
       item.querySelector('button')?.addEventListener('click', () => {
+        if (!requireStreetService('garage')) return;
         if (owned) {
           garageState.equippedBike = bike.id;
           saveGarageState();
@@ -8843,6 +9834,7 @@ function renderShipperModalContent() {
       `;
       item.querySelector('button')?.addEventListener('click', () => {
         if (isMax) return;
+        if (!requireStreetService('garage')) return;
         if (playerState.coins < nextCost) {
           showToast(`⚠️ Bạn cần ${nextCost.toLocaleString('vi-VN')}đ để nâng cấp ${upg.name}!`);
           return;
@@ -8919,6 +9911,7 @@ function renderShipperModalContent() {
 
     stallPanel.querySelector('#modal-tycoon-upg-btn')?.addEventListener('click', () => {
       if (!nextUpg) return;
+      if (!requireStreetService('business')) return;
       if (playerState.coins < nextUpg.cost) {
         showToast(`⚠️ Bạn cần ${nextUpg.cost.toLocaleString('vi-VN')}đ để nâng cấp Quán Xôi lên Cấp ${nextUpg.level}!`);
         return;
@@ -8943,6 +9936,37 @@ function renderShipperModalContent() {
   const eventsPanel = document.getElementById('business-events-panel');
   if (eventsPanel) {
     eventsPanel.innerHTML = `
+      <div class="garage-item-card" style="border-color:#f59e0b; background:linear-gradient(135deg, rgba(120,53,15,0.35), rgba(30,41,59,0.85));">
+        <div class="garage-item-head">
+          <strong>♟ Sạp Cờ Tướng Vỉa Hè & Phá Cờ Thế Giang Hồ</strong>
+          <span class="shipper-record-badge">Số 41 Phú Thượng</span>
+        </div>
+        <p>Giải 4 thế cờ vỉa hè kinh điển (Đi 1 nước chiếu bí ngay) hoặc phá thế cờ liên hoàn & đấu trí cùng 3 vị Kỳ Vương vỉa hè.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:4px;">
+          <button type="button" id="modal-chess-play-btn" class="choice-btn primary" style="flex:1;">♟ Mở Bàn Cờ Chơi Ngay</button>
+          <button type="button" id="modal-chess-now-btn" class="choice-btn" style="flex:1;">🧭 Dẫn Đường Tới Sạp</button>
+        </div>
+      </div>
+
+      <div class="garage-item-card" style="border-color:#38bdf8; background:linear-gradient(135deg, rgba(12,74,110,0.4), rgba(15,23,42,0.88));">
+        <div class="garage-item-head">
+          <strong>🏮 6 Lễ Hội & Hoạt Động Khu Mở Rộng Ven Sông – Đê</strong>
+          <span class="shipper-record-badge">Thế Giới Mở Rộng</span>
+        </div>
+        <p>Khám phá 6 khu vực mở rộng hoặc chơi ngay các hoạt động văn hóa đặc sắc: Thả Diều Sáo, Hoa Đăng Sông Hồng, Chợ Phiên, Trà Sen Vườn Tre, Trống Hội Phú Xá & Tỉa Đào Thế!</p>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px;">
+          <button type="button" class="choice-btn primary exp-mg-btn" data-mode="dyke_kite">🪁 Thả Diều Đê Sông</button>
+          <button type="button" class="choice-btn primary exp-mg-btn" data-mode="river_lookout">🏮 Thả Hoa Đăng Sông</button>
+          <button type="button" class="choice-btn primary exp-mg-btn" data-mode="weekend_bazaar">🧺 Chợ Phiên Đầu Đông</button>
+          <button type="button" class="choice-btn primary exp-mg-btn" data-mode="bamboo_tea">🍵 Trà Sen Vườn Tre</button>
+          <button type="button" class="choice-btn primary exp-mg-btn" data-mode="phu_xa_festival">🥁 Trống Hội Phú Xá</button>
+          <button type="button" class="choice-btn primary exp-mg-btn" data-mode="peach_bonsai">✂️ Tỉa Đào Cổ Thụ</button>
+        </div>
+        <button type="button" id="modal-open-world-map-btn" class="choice-btn" style="width:100%; margin-top:6px; border-color:#38bdf8;">
+          🗺️ Mở Bản Đồ Lớn Toàn Cảnh & Dịch Chuyển Nhanh (Phím M)
+        </button>
+      </div>
+
       <div class="garage-item-card">
         <div class="garage-item-head">
           <strong>🚨 Đội Tuần Tra & Cứu Hộ Đường Phố</strong>
@@ -8981,6 +10005,24 @@ function renderShipperModalContent() {
       </div>
     `;
 
+    eventsPanel.querySelector('#modal-chess-play-btn')?.addEventListener('click', () => {
+      closeShipperModal();
+      if (playerState.isRidingBike) togglePlayerMotorbike();
+      arcadeController?.openDirect?.();
+    });
+
+    eventsPanel.querySelectorAll('.exp-mg-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.getAttribute('data-mode');
+        if (mode) openExpandedDistrictMiniGame(mode);
+      });
+    });
+
+    eventsPanel.querySelector('#modal-open-world-map-btn')?.addEventListener('click', () => {
+      closeShipperModal();
+      openWorldMapModal();
+    });
+
     eventsPanel.querySelector('#modal-spawn-event-btn')?.addEventListener('click', () => {
       closeShipperModal();
       if (!activeStreetEvent) spawnRandomStreetEvent();
@@ -8991,6 +10033,12 @@ function renderShipperModalContent() {
           title: activeStreetEvent.template.title
         });
       }
+    });
+
+    eventsPanel.querySelector('#modal-chess-now-btn')?.addEventListener('click', () => {
+      closeShipperModal();
+      guideToInventoryTarget({ x: -40.6, z: 8.3, title: 'Sạp Cờ Tướng · Trà Đá Vỉa Hè 41' });
+      showToast('🧭 Đã bật dẫn đường theo lộ trình đường phố tới Sạp Cờ Vỉa Hè Số 41!');
     });
 
     eventsPanel.querySelector('#modal-fishing-now-btn')?.addEventListener('click', () => openFishingMiniGame());
@@ -9082,6 +10130,7 @@ function renderShipperModalContent() {
         </button>
       `;
       item.querySelector('button')?.addEventListener('click', () => {
+        if (!requireStreetService('garage')) return;
         if (owned) {
           garageState.equippedOutfit = outfit.id;
           saveGarageState();
@@ -9153,21 +10202,21 @@ function renderShipperModalContent() {
 }
 
 function requireWorldActivity(type){
-  const target=worldInteractables.find(p=>p.type===type);
-  if(!target)return false;
-  if(horrorModeActive||playerState.isRidingBike||Math.hypot(playerGroup.position.x-target.x,playerGroup.position.z-target.z)>(target.radius||3.6)){
-    showToast(`Tới ${target.title}, xuống xe và bấm E để chơi.`,4200);if(!horrorModeActive)customGpsTarget={x:target.x,z:target.z,title:target.title};return false;
-  }return true;
+  if(horrorModeActive){
+    showToast('⚠️ Hoạt động này chỉ diễn ra vào ban ngày.');
+    return false;
+  }
+  if(playerState.isRidingBike)togglePlayerMotorbike();
+  return true;
 }
-function serviceContext(){return {x:playerGroup.position.x,z:playerGroup.position.z,riding:playerState.isRidingBike,night:horrorModeActive};}
+function serviceContext(){return {x:playerGroup.position.x,z:playerGroup.position.z,riding:false,night:horrorModeActive};}
 function requireStreetService(tab){
-  const result=serviceAccess(tab,serviceContext());
-  if(!result.ok){showToast(result.reason,4200);if(!horrorModeActive)customGpsTarget={...result.point};}
-  return result.ok;
+  if(horrorModeActive){showToast('⚠️ Dịch vụ phố chỉ hoạt động vào ban ngày.');return false;}
+  if(playerState.isRidingBike)togglePlayerMotorbike();
+  return true;
 }
-function selectShipperTab(tab){if(!requireStreetService(tab))return;activeShipperTab=tab;renderShipperModalContent();}
+function selectShipperTab(tab){activeShipperTab=tab;renderShipperModalContent();}
 function openShipperModal(defaultTab = 'orders') {
-  if(!requireStreetService(defaultTab))return;
   if (horrorModeActive) {
     showToast('⚠️ Trung tâm Hoạt động & Xưởng Độ Xe chỉ hoạt động vào ban ngày.');
     return;
@@ -9255,35 +10304,73 @@ const autumnLeafMat = new THREE.PointsMaterial({
 const autumnParticles = new THREE.Points(autumnLeafGeo, autumnLeafMat);
 scene.add(autumnParticles);
 
-// Đường dẫn mũi tên Decal Chevron GPS nằm sát mặt đường hướng tới mục tiêu hiện tại
+// Đường dẫn mũi tên Hologram Chevron GPS 3D bám theo lộ trình mặt đường + Cột sáng đích đến (Destination Beacon)
 const gpsGuideGroup = new THREE.Group();
 const gpsChevrons = [];
+let gpsTargetBeacon = null;
 {
   const chevronShape = new THREE.Shape();
-  chevronShape.moveTo(0, 0.28);
-  chevronShape.lineTo(0.28, -0.06);
-  chevronShape.lineTo(0.18, -0.16);
-  chevronShape.lineTo(0, 0.06);
-  chevronShape.lineTo(-0.18, -0.16);
-  chevronShape.lineTo(-0.28, -0.06);
+  chevronShape.moveTo(0, 0.36);
+  chevronShape.lineTo(0.32, -0.04);
+  chevronShape.lineTo(0.20, -0.18);
+  chevronShape.lineTo(0, 0.08);
+  chevronShape.lineTo(-0.20, -0.18);
+  chevronShape.lineTo(-0.32, -0.04);
   chevronShape.closePath();
-  const chevronGeo = new THREE.ShapeGeometry(chevronShape);
+  const chevronGeo = new THREE.ExtrudeGeometry(chevronShape, {
+    depth: 0.028,
+    bevelEnabled: true,
+    bevelSegments: 2,
+    steps: 1,
+    bevelSize: 0.012,
+    bevelThickness: 0.012
+  });
   chevronGeo.rotateX(-Math.PI / 2);
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 8; i++) {
     const chev = new THREE.Mesh(
       chevronGeo,
-      new THREE.MeshBasicMaterial({
+      new THREE.MeshStandardMaterial({
         color: 0x38bdf8,
+        emissive: 0x0284c7,
+        emissiveIntensity: 1.35,
+        roughness: 0.2,
+        metalness: 0.3,
         transparent: true,
-        opacity: 0.82 - i * 0.12,
-        side: THREE.DoubleSide,
+        opacity: 0.92 - i * 0.08,
         depthWrite: false
       })
     );
     gpsGuideGroup.add(chev);
     gpsChevrons.push(chev);
   }
+
+  // Cột sáng báo hiệu tại đúng điểm đích (AAA Waypoint Pillar)
+  gpsTargetBeacon = new THREE.Group();
+  const ringGeo = new THREE.RingGeometry(0.65, 0.88, 32).rotateX(-Math.PI / 2);
+  const ringMesh = new THREE.Mesh(
+    ringGeo,
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ringMesh.position.y = 0.05;
+  gpsTargetBeacon.add(ringMesh);
+
+  const pillarGeo = new THREE.CylinderGeometry(0.45, 0.65, 4.2, 20, 1, true);
+  const pillarMesh = new THREE.Mesh(
+    pillarGeo,
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.24, side: THREE.DoubleSide, depthWrite: false })
+  );
+  pillarMesh.position.y = 2.15;
+  gpsTargetBeacon.add(pillarMesh);
+
+  const diamondMesh = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.28, 0),
+    new THREE.MeshStandardMaterial({ color: 0xfef08a, emissive: 0xf59e0b, emissiveIntensity: 1.5, roughness: 0.15, metalness: 0.7 })
+  );
+  diamondMesh.position.y = 2.4;
+  gpsTargetBeacon.add(diamondMesh);
+  gpsTargetBeacon.userData = { ringMesh, pillarMesh, diamondMesh };
+  gpsGuideGroup.add(gpsTargetBeacon);
 }
 scene.add(gpsGuideGroup);
 
@@ -9408,13 +10495,14 @@ function updateFlashlightTransform(elapsed = 0, isMoving = false) {
 }
 
 const playerRideLegs = new THREE.Group();
-const ridePantsMat = new THREE.MeshStandardMaterial({ color: 0x17243a, roughness: 0.88 });
-const rideShoeMat = new THREE.MeshStandardMaterial({ color: 0xf2eee5, roughness: 0.72 });
+const ridePantsMat = new THREE.MeshStandardMaterial({ color: 0x17243a, roughness: 0.82 });
+const rideShoeMat = new THREE.MeshStandardMaterial({ color: 0xf2eee5, roughness: 0.65 });
+installHumanOrganicShader(ridePantsMat, 'cloth');
 const rideLimbAxis = new THREE.Vector3(0, 1, 0);
 function addRideLegSegment(from, to, radius, material) {
   const direction = new THREE.Vector3().subVectors(to, from);
   const segment = new THREE.Mesh(
-    new THREE.CapsuleGeometry(radius, Math.max(0.02, direction.length() - radius * 2), 5, 10),
+    new THREE.CapsuleGeometry(radius, Math.max(0.02, direction.length() - radius * 2), 10, 18),
     material
   );
   segment.position.copy(from).add(to).multiplyScalar(0.5);
@@ -9426,9 +10514,12 @@ function addRideLegSegment(from, to, radius, material) {
   const hip = new THREE.Vector3(side * 0.105, 0.82, 0.01);
   const knee = new THREE.Vector3(side * 0.12, 0.61, 0.27);
   const ankle = new THREE.Vector3(side * 0.12, 0.37, 0.2);
-  addRideLegSegment(hip, knee, 0.065, ridePantsMat);
-  addRideLegSegment(knee, ankle, 0.055, ridePantsMat);
-  const shoe = new THREE.Mesh(new RoundedBoxGeometry(0.15, 0.095, 0.25, 3, 0.035), rideShoeMat);
+  addRideLegSegment(hip, knee, 0.066, ridePantsMat);
+  addRideLegSegment(knee, ankle, 0.054, ridePantsMat);
+  const kneeJoint = new THREE.Mesh(new THREE.SphereGeometry(0.06, 14, 12), ridePantsMat);
+  kneeJoint.position.copy(knee);
+  playerRideLegs.add(kneeJoint);
+  const shoe = new THREE.Mesh(new RoundedBoxGeometry(0.145, 0.092, 0.25, 4, 0.038), rideShoeMat);
   shoe.position.set(side * 0.12, 0.345, 0.3);
   shoe.castShadow = true;
   playerRideLegs.add(shoe);
@@ -9437,13 +10528,15 @@ playerRideLegs.visible = false;
 playerGroup.add(playerRideLegs);
 
 const playerRideArms = new THREE.Group();
-const rideShirtMat = new THREE.MeshStandardMaterial({ color: 0xc8443b, roughness: 0.82 });
-const rideSkinMat = new THREE.MeshStandardMaterial({ color: 0xd6a178, roughness: 0.7 });
-const rideArmGeometry = new THREE.CylinderGeometry(1, 0.9, 1, 10);
+const rideShirtMat = new THREE.MeshStandardMaterial({ color: 0xc8443b, roughness: 0.78 });
+const rideSkinMat = new THREE.MeshStandardMaterial({ color: 0xd6a178, roughness: 0.54 });
+installHumanOrganicShader(rideShirtMat, 'cloth');
+installHumanOrganicShader(rideSkinMat, 'skin');
+const rideArmGeometry = new THREE.CapsuleGeometry(0.95, 0.55, 8, 16);
 const rideArmParts = playerBikeMesh.userData.grips.map(() => {
   const upper = new THREE.Mesh(rideArmGeometry, rideShirtMat);
   const forearm = new THREE.Mesh(rideArmGeometry, rideSkinMat);
-  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 9), rideSkinMat);
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.052, 16, 12), rideSkinMat);
   upper.castShadow = true;
   forearm.castShadow = true;
   hand.castShadow = true;
@@ -9613,7 +10706,11 @@ const PHOTO_SPOTS = [
   { id: 'spot_lietsi', name: 'Đài Tưởng Niệm Liệt Sĩ Phú Thượng', x: -24, z: -28 },
   { id: 'spot_chohoa', name: 'Chợ Hoa Quảng Bá', x: 134, z: -7 },
   { id: 'spot_congvien', name: 'Công Viên Cộng Đồng Phú Thượng', x: 128, z: 16 },
-  { id: 'spot_vuondao', name: 'Vườn Đào Phú Thượng & Cổng Làng', x: -153, z: 8 }
+  { id: 'spot_vuondao', name: 'Vườn Đào Phú Thượng & Cổng Làng', x: -153, z: 8 },
+  { id: 'spot_sanhong', name: 'Đài Viễn Vọng & Sân Ngắm Sông Hồng', x: 366, z: -160 },
+  { id: 'spot_chophien', name: 'Chợ Phiên Nông Sản Đầu Đông', x: 302, z: -75 },
+  { id: 'spot_vuontre', name: 'Quán Trà Sen Vườn Tre Ven Sông', x: 267, z: -227 },
+  { id: 'spot_phuxa', name: 'Sân Trống Hội Đình Làng Phú Xá', x: -162, z: -108 }
 ];
 
 function captureLandmarkPhoto() {
@@ -11127,7 +12224,9 @@ let districtGuideCache=null;
 function guidancePath(target){
   if(!target)return [];
   const p=playerGroup.position,key=`${target.x},${target.z}`;
-  if(!districtGuideCache||districtGuideCache.key!==key||Math.hypot(p.x-districtGuideCache.x,p.z-districtGuideCache.z)>2){districtGuideCache={key,x:p.x,z:p.z,path:memorialPath(p,target)||districtPath(p,target)};}
+  if(!districtGuideCache||districtGuideCache.key!==key||Math.hypot(p.x-districtGuideCache.x,p.z-districtGuideCache.z)>1.8){
+    districtGuideCache={key,x:p.x,z:p.z,path:memorialPath(p,target)||streetSidePath(p,target)};
+  }
   return districtGuideCache.path;
 }
 
@@ -11450,25 +12549,46 @@ function useInventoryItem(itemId) {
     }
     consumeItem('xoi_phu_thuong');
     playerState.stamina = 100;
+    setPlayerBuff('xoi', {
+      name: 'Xôi Nếp Năng Lượng',
+      icon: '🍙',
+      desc: '+30% tốc độ di chuyển & lái xe, Thể lực không giảm',
+      duration: 180,
+      color: '#f59e0b',
+      glow: 'rgba(245, 158, 11, 0.45)'
+    });
     addRewards(0, 25);
     playSoundEffect('quest');
-    showToast('🍙 Đã ăn Gói Xôi Phú Thượng nóng hổi! Thể lực hồi 100% (+25 XP).');
     renderInventoryModalContent();
   } else if (itemId === 'tra_da') {
     consumeItem('tra_da');
     playerState.stamina = 100;
     storyComposure = 100;
+    setPlayerBuff('tra_da', {
+      name: 'Trà Đá Tỉnh Táo',
+      icon: '🍵',
+      desc: 'Nạp Nitro x2, Ôm cua Drift mượt mà và nhạy bén hơn 40%',
+      duration: 150,
+      color: '#10b981',
+      glow: 'rgba(16, 185, 129, 0.45)'
+    });
     addRewards(0, 15);
     playSoundEffect('coin');
-    showToast('🍵 Đã uống Cốc Trà Đá mát lạnh! Thể lực & sự bình tĩnh hồi 100% (+15 XP).');
     renderInventoryModalContent();
   } else if (itemId === 'kem_ho_tay') {
     consumeItem('kem_ho_tay');
     playerState.stamina = 100;
     storyComposure = 100;
+    setPlayerBuff('kem', {
+      name: 'Kem Tây Hồ May Mắn',
+      icon: '🍦',
+      desc: '+50% tiền thưởng & XP khi làm nhiệm vụ, shipper & sự kiện phố',
+      duration: 180,
+      color: '#06b6d4',
+      glow: 'rgba(6, 182, 212, 0.45)'
+    });
     addRewards(0, 25);
     playSoundEffect('quest');
-    showToast('🍦 Đã thưởng thức Kem Ốc Quế Hồ Tây mát lạnh! Thể lực hồi 100% (+25 XP).');
     renderInventoryModalContent();
   } else if (itemId === 'bang_ghi_am_41') {
     playHorrorPhoneRing();
@@ -11804,17 +12924,7 @@ function interactWithWorldProp(prop) {
     return;
   }
   if (prop.type === 'chess') {
-    activePropSession = { type: 'chess', prop, title: prop.title, timer: 0 };
-    const chessMoves = [
-      '“Pháo Đầu Mã Đội — Chiếu tướng tuyệt sát!” Các cụ bô lão trong chòi lục giác vỗ đùi khen nước cờ cao!',
-      '“Mã Hậu Pháo khóa Tướng!” Bạn vừa hóa giải thành công thế cờ giang hồ bên Hồ Sen Tây Hồ!',
-      '“Song Xe đoạt Sĩ Tượng!” Nước cờ sắc bén khiến cả bàn cờ trầm trồ thán phục!'
-    ];
-    const msg = chessMoves[Math.floor(Math.random() * chessMoves.length)];
-    addRewards(15000, 45);
-    awardSocialProgress({ neighborhood: { heritage: 2, cohesion: 3 } });
-    playSoundEffect('quest');
-    showToast(`♟️ ${msg} (+15.000đ, +45 XP)! Bấm [E] hoặc [Space] để đứng dậy.`, 5500);
+    arcadeController?.openDirect?.();
     return;
   }
   if (prop.type === 'kiosk') {
@@ -11864,6 +12974,17 @@ function interactWithWorldProp(prop) {
     openJianziMiniGame();
     return;
   }
+  if (
+    prop.type === 'dyke_kite' ||
+    prop.type === 'river_lookout' ||
+    prop.type === 'weekend_bazaar' ||
+    prop.type === 'bamboo_tea' ||
+    prop.type === 'phu_xa_festival' ||
+    prop.type === 'peach_bonsai'
+  ) {
+    openExpandedDistrictMiniGame(prop.type);
+    return;
+  }
   if (prop.type === 'peach_shrine') {
     playerState.stamina = 100;
     const outfitMult = garageState.equippedOutfit === 'outfit_tycoon' ? 1.25 : 1.0;
@@ -11891,7 +13012,9 @@ function interactWithWorldProp(prop) {
 
 function performPrimaryInteraction() {
   if (isDialogueOpen) return;
-  if(playerState.isRidingBike){showToast('Dừng xe và bấm F xuống xe trước khi tương tác. C: nhận đơn ship nhanh · Space: phanh.');return;}
+  if (playerState.isRidingBike) {
+    togglePlayerMotorbike();
+  }
   if(policeController?.interact({x:playerGroup.position.x,z:playerGroup.position.z,riding:playerState.isRidingBike}))return;
   if (activePropSession) {
     stopActivePropSession(true);
@@ -11947,9 +13070,20 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.d = true;
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') keys.shift = true;
   if (e.code === 'Space') {keys.space = true;if(playerState.isRidingBike)e.preventDefault();}
-  if (e.code === 'KeyQ') keys.q = true;
+  if (e.code === 'KeyQ') {
+    keys.q = true;
+    if (!horrorModeActive && !e.repeat && !isDialogueOpen) {
+      triggerCulturalSonarScan();
+    }
+  }
+  if (e.code === 'KeyM' && !e.repeat) {
+    if (!nightActivity && (!isDialogueOpen || isWorldMapOpen)) {
+      toggleWorldMapModal();
+    }
+  }
   if (e.code === 'KeyG' && !e.repeat) {
-    if (!nightActivity && (!isDialogueOpen || isShipperModalOpen)) {
+    if (!nightActivity && (!isDialogueOpen || isShipperModalOpen || isWorldMapOpen)) {
+      if (isWorldMapOpen) closeWorldMapModal();
       toggleShipperModal('orders');
     }
   }
@@ -12019,7 +13153,8 @@ window.addEventListener('keydown', (e) => {
     else togglePlayerFlashlight();
   }
   if (e.code === 'Escape') {
-    if (isSettingsOpen) closeSettingsModal();
+    if (isWorldMapOpen) closeWorldMapModal();
+    else if (isSettingsOpen) closeSettingsModal();
     else if (isJournalOpen) closeJournalModal();
     else if (isInventoryOpen) closeInventoryModal();
     else if (isShipperModalOpen) closeShipperModal();
@@ -12409,23 +13544,21 @@ function updateQuestProgress() {
 
   const hintEl = document.getElementById('quest-sub-hint');
   if (qCount >= total) {
-    document.getElementById('quest-text').textContent =
-      '🏆 Xuất sắc! Bạn đã hoàn thành toàn bộ 5 Nhiệm Vụ Văn Hóa Phố Phú Thượng (5/5)';
+    document.getElementById('quest-text').textContent = '🏆 Đã hoàn thành 5/5 Nhiệm Vụ Phú Thượng';
     if (hintEl) {
-      hintEl.textContent = '🎉 Đã xong chuỗi văn hóa! Tiếp tục Chương “Góc Phố Số 41” và thu thập đủ 12 Sao Di Sản.';
+      hintEl.textContent = '🎉 Bấm G để chơi Cờ Thế, Câu Cá, Đá Cầu hoặc Độ Xe!';
     }
   } else {
-    document.getElementById('quest-text').textContent =
-      `Hoàn thành Nhiệm Vụ Thực Tế: ${qCount}/5 • Đã ghé thăm: ${visitedNPCs.size}/5 địa điểm`;
+    document.getElementById('quest-text').textContent = `Nhiệm vụ Phú Thượng: ${qCount}/5 hoàn thành`;
     if (hintEl) {
       if (!playerState.completedQuests.has('quest_baove')) {
-        hintEl.textContent = '💡 Nhiệm vụ 1: Tìm Cô Gánh Xôi ở góc vỉa hè trước cổng trường, bấm [E] mua Xôi Phú Thượng biếu Bác Bảo Vệ!';
+        hintEl.textContent = '💡 Ghé Cô Gánh Xôi cổng trường bấm [E] mua xôi biếu Bác Bảo Vệ';
       } else if (!playerState.completedQuests.has('quest_ngaba')) {
-        hintEl.textContent = '💡 Nhiệm vụ 2: Nhận Công Văn từ Cán Bộ UBND Phường mang tới Ngã Ba 68 giao cho Bác Tổ Trưởng!';
+        hintEl.textContent = '💡 Nhận Công Văn tại UBND Phường giao tới Ngã Ba 68';
       } else if (!playerState.completedQuests.has('quest_lietsi')) {
-        hintEl.textContent = '💡 Nhiệm vụ 3: Ghé Quán Trà Đá Cô Hoa nhận Bó Hoa Cúc Vàng mang vào Đài Tưởng Niệm Liệt Sĩ!';
+        hintEl.textContent = '💡 Nhận Hoa Cúc tại Quán Trà Đá mang vào Đài Tưởng Niệm';
       } else {
-        hintEl.textContent = '💡 Gợi ý: Giải đố Di sản tại UBND Phường hoặc uống Trà Đá Cô Hoa để hoàn tất 5/5 nhiệm vụ!';
+        hintEl.textContent = '💡 Giải đố tại UBND Phường hoặc uống Trà Đá Cô Hoa (5/5)';
       }
     }
   }
@@ -12633,6 +13766,690 @@ document.getElementById('shipper-modal')?.addEventListener('click',event=>{
   if(!panel||/guide|gps/.test(button.id))return;
   if(!requireStreetService(panel.id.replace('shipper-tab-',''))){event.preventDefault();event.stopImmediatePropagation();}
 },true);
+
+// ============================================================================
+// BẢN ĐỒ TƯƠNG TÁC TOÀN CẢNH PHÚ THƯỢNG & VÙNG MỞ RỘNG (PHÍM M)
+// ============================================================================
+let isWorldMapOpen = false;
+let activeMapCategory = 'all';
+let selectedMapPoiId = 'poi_dyke_kite';
+
+const WORLD_MAP_BOUNDS = {
+  minX: -245,
+  maxX: 390,
+  minZ: -255,
+  maxZ: 95
+};
+
+const WORLD_MAP_POIS = [
+  {
+    id: 'poi_dyke_kite',
+    category: 'expanded',
+    icon: '🪁',
+    title: 'Bãi Thả Diều Sáo Đê An Dương Vương',
+    zone: 'Đê Sông Hồng',
+    x: 20.0,
+    z: -225.0,
+    yaw: 0,
+    reward: '+50.000đ · +135 XP',
+    desc: 'Lễ hội thả diều sáo truyền thống trên mặt đê lộng gió nhìn ra cầu Nhật Tân & Sông Hồng.',
+    playMode: 'dyke_kite'
+  },
+  {
+    id: 'poi_river_lookout',
+    category: 'expanded',
+    icon: '🏮',
+    title: 'Bến Thả Đèn Hoa Đăng & Đài Ngắm Sông Hồng',
+    zone: 'Bến Sông Hồng Phía Đông',
+    x: 366.0,
+    z: -160.0,
+    yaw: Math.PI / 2,
+    reward: '+45.000đ · +120 XP · 100% Thể lực',
+    desc: 'Đài viễn vọng ngắm toàn cảnh Sông Hồng và bến thả đèn hoa đăng cầu bình an, thịnh vượng.',
+    playMode: 'river_lookout'
+  },
+  {
+    id: 'poi_weekend_bazaar',
+    category: 'expanded',
+    icon: '🧺',
+    title: 'Chợ Phiên Nông Sản & Đặc Sản Đầu Đông',
+    zone: 'Khu Mở Rộng Phía Đông',
+    x: 302.0,
+    z: -75.0,
+    yaw: Math.PI,
+    reward: '+48.000đ · +125 XP',
+    desc: 'Phiên chợ quê nhộn nhịp bày bán Trà Sen Bách Diệp, Nếp Cái Hoa Vàng, Cốm Non và Bưởi Đào.',
+    playMode: 'weekend_bazaar'
+  },
+  {
+    id: 'poi_bamboo_tea',
+    category: 'expanded',
+    icon: '🍵',
+    title: 'Quán Trà Sen & Đối Thơ Vườn Tre Ven Sông',
+    zone: 'Vườn Tre Ven Đê',
+    x: 267.0,
+    z: -227.0,
+    yaw: 0,
+    reward: '+42.000đ · +115 XP · Buff +50% Thưởng',
+    desc: 'Không gian thanh tịnh dưới rặng tre xanh, nơi thưởng trà sen cổ truyền và đối thơ cùng các bô lão.',
+    playMode: 'bamboo_tea'
+  },
+  {
+    id: 'poi_phu_xa_drum',
+    category: 'expanded',
+    icon: '🥁',
+    title: 'Sân Trống Hội Đình Làng Phú Xá',
+    zone: 'Phố Phú Xá',
+    x: -162.0,
+    z: -108.0,
+    yaw: 0,
+    reward: '+46.000đ · +125 XP',
+    desc: 'Quảng trường văn hóa cuối phố Phú Xá với dàn trống đại lễ hội vang rền hào khí nghìn năm.',
+    playMode: 'phu_xa_festival'
+  },
+  {
+    id: 'poi_peach_bonsai',
+    category: 'expanded',
+    icon: '✂️',
+    title: 'Vườn Nghệ Nhân Tỉa Đào Thế Cổ Thụ',
+    zone: 'Vườn Đào Mở Rộng Phía Tây',
+    x: -200.0,
+    z: -37.0,
+    yaw: Math.PI / 2,
+    reward: '+44.000đ · +120 XP',
+    desc: 'Làng nghề uốn tỉa bonsai đào bích cổ thụ dáng Long Giáng, Ngũ Phúc phục vụ Tết cổ truyền.',
+    playMode: 'peach_bonsai'
+  },
+  {
+    id: 'poi_chess_stall',
+    category: 'minigame',
+    icon: '♟',
+    title: 'Kỳ Đài Sạp Cờ Tướng Vỉa Hè Số 41',
+    zone: 'Phố Phú Thượng (Số 41)',
+    x: -40.6,
+    z: 8.3,
+    yaw: Math.PI,
+    reward: 'Phá 4 Cờ Thế 1 Nước · Đấu Kỳ Vương',
+    desc: 'Sạp cờ tướng dưới tán ô vỉa hè: Giải 4 thế cờ 1 nước chiếu bí ngay, 6 thế liên hoàn & Cờ Chấp.',
+    playAction: 'chess'
+  },
+  {
+    id: 'poi_lotus_fishing',
+    category: 'minigame',
+    icon: '🎣',
+    title: 'Bến Câu Cá Koi & Cá Chép Hồ Sen',
+    zone: 'Công Viên Văn Hóa Phú Thượng',
+    x: 145.2,
+    z: 24.5,
+    yaw: -Math.PI / 2,
+    reward: 'Thưởng tới +120.000đ / lượt',
+    desc: 'Bến gỗ lim vươn ra mặt Hồ Sen thơm ngát, nơi buông cần câu Cá Chép Vàng & Cá Koi Hoàng Kim.',
+    playAction: 'fishing'
+  },
+  {
+    id: 'poi_jianzi_court',
+    category: 'minigame',
+    icon: '🪶',
+    title: 'Sân Đá Cầu Kiểng Nghệ Thuật Công Viên',
+    zone: 'Công Viên Văn Hóa Phú Thượng',
+    x: 126.5,
+    z: 14.5,
+    yaw: Math.PI,
+    reward: 'Thưởng chuỗi Combo liên hoàn',
+    desc: 'Sân thi đấu tâng cầu kiểng nghệ thuật và vít cầu qua lưới cùng cư dân Phú Thượng.',
+    playAction: 'jianzi'
+  },
+  {
+    id: 'poi_peach_shrine',
+    category: 'minigame',
+    icon: '🌸',
+    title: 'Lầu Vọng Cảnh & Cây Đào Ước Nguyện',
+    zone: 'Vườn Đào Phú Thượng',
+    x: -162.0,
+    z: 14.8,
+    yaw: 0,
+    reward: '+25.000đ · +85 XP · 100% Thể lực',
+    desc: 'Lầu bát giác 2 tầng sơn son thếp vàng giữa rừng đào bích, nơi treo thẻ ước nguyện mùa xuân.',
+    playAction: 'shrine'
+  },
+  {
+    id: 'poi_shipper_garage',
+    category: 'service',
+    icon: '🛵',
+    title: 'Trạm Shipper Siêu Tốc & Xưởng Độ Xe 3D',
+    zone: 'Phố Phú Thượng (Cạnh UBND)',
+    x: 18.5,
+    z: -6.0,
+    yaw: 0,
+    reward: '8 Tuyến Đua Shipper · Độ 4 Dòng Xe',
+    desc: 'Trung tâm nhận 8 tuyến giao hàng tốc độ cao khắp quận và nâng cấp Động cơ, Nitro, Đèn Gầm Neon.',
+    playAction: 'garage'
+  },
+  {
+    id: 'poi_tycoon_stall',
+    category: 'service',
+    icon: '🏮',
+    title: 'Quán Xôi & Trà Đá Tự Quản Của Linh',
+    zone: 'Vỉa Hè Số 26 Phú Thượng',
+    x: -26.5,
+    z: -5.5,
+    yaw: 0,
+    reward: 'Thu nhập thụ động & Phục vụ Combo',
+    desc: 'Cơ sở kinh doanh ẩm thực truyền thống tự quản của bạn — nâng cấp 4 cấp độ và thu két tiền tự động.',
+    playAction: 'tycoon'
+  },
+  {
+    id: 'poi_xoi_vendor',
+    category: 'service',
+    icon: '🍙',
+    title: 'Gánh Xôi Phú Thượng Cổng Trường 41',
+    zone: 'Số 41 Phố Phú Thượng',
+    x: -10.5,
+    z: 6.2,
+    yaw: Math.PI,
+    reward: 'Mini-game Gói Xôi Lá Chuối 3 Sao',
+    desc: 'Trải nghiệm tự tay chọn nếp cái hoa vàng, đỗ xanh hành phi và gói lá chuối nóng hổi.',
+    playAction: 'xoi'
+  },
+  {
+    id: 'poi_thpt_tayho',
+    category: 'quest',
+    icon: '🏫',
+    title: 'Cổng Trường THPT Tây Hồ (Số 41)',
+    zone: 'Trung Tâm Phố Phú Thượng',
+    x: -2.2,
+    z: 2.0,
+    yaw: 0,
+    reward: 'Nhiệm vụ Bác Bảo Vệ (+35.000đ)',
+    desc: 'Ngôi trường trung học gắn liền với tuổi trẻ Phú Thượng. Gặp Bác Bảo Vệ để biếu gói xôi nóng.'
+  },
+  {
+    id: 'poi_ubnd_phuong',
+    category: 'quest',
+    icon: '🏛️',
+    title: 'Trụ Sở UBND Phường Phú Thượng',
+    zone: 'Trung Tâm Phố Phú Thượng',
+    x: 0.0,
+    z: -2.5,
+    yaw: Math.PI,
+    reward: 'Nhận Công Văn & Đố Vui Di Sản',
+    desc: 'Nơi gặp Cán bộ Văn hóa nhận Công văn lễ hội và tìm hiểu Di sản Quốc gia Nghề Xôi Phú Thượng.'
+  },
+  {
+    id: 'poi_memorial',
+    category: 'quest',
+    icon: '🕯️',
+    title: 'Đài Tưởng Niệm Liệt Sĩ Phú Thượng',
+    zone: 'Khu Tưởng Niệm Sau UBND',
+    x: -24.0,
+    z: -22.0,
+    yaw: Math.PI,
+    reward: 'Nhiệm vụ Dâng Hoa (+50.000đ)',
+    desc: 'Không gian trang nghiêm tưởng nhớ các Anh hùng Liệt sĩ quê hương Phú Thượng.'
+  },
+  {
+    id: 'poi_tea_co_hoa',
+    category: 'quest',
+    icon: '🧊',
+    title: 'Quán Trà Đá Vỉa Hè Cô Hoa',
+    zone: 'Hàng Cây Xà Cừ Phú Thượng',
+    x: -44.0,
+    z: -1.5,
+    yaw: Math.PI / 2,
+    reward: 'Nhận Hoa Cúc & Cải Tạo Góc Phố',
+    desc: 'Điểm hẹn quen thuộc của bà con khu phố dưới hàng xà cừ cổ thụ.'
+  },
+  {
+    id: 'poi_ngaba_68',
+    category: 'quest',
+    icon: '🚦',
+    title: 'Ngã Ba 68 Phú Thượng – Phú Gia',
+    zone: 'Giao Lộ Đông Phú Thượng',
+    x: 38.0,
+    z: -1.5,
+    yaw: Math.PI / 2,
+    reward: 'Giao Công Văn Bác Tổ Trưởng (+40.000đ)',
+    desc: 'Nút giao sầm uất kết nối Phố Phú Thượng với trục đường cổ Phú Gia dẫn lên Đê Sông Hồng.'
+  },
+  {
+    id: 'poi_quang_ba_market',
+    category: 'quest',
+    icon: '💐',
+    title: 'Chợ Hoa Quảng Bá & Cổng Công Viên',
+    zone: 'Cửa Ngõ Phía Đông',
+    x: 134.0,
+    z: -4.0,
+    yaw: 0,
+    reward: 'Mua Hoa Tươi & Chụp Ảnh Check-in',
+    desc: 'Chợ hoa tươi rực rỡ sắc màu suốt ngày đêm nằm ngay đối diện Công Viên Văn Hóa Phú Thượng.'
+  },
+  {
+    id: 'poi_ngo_41',
+    category: 'quest',
+    icon: '🏮',
+    title: 'Cổng Ngõ 41 & Nhà Số 41 Phú Thượng',
+    zone: 'Khu Phố Cổ Ngõ 41',
+    x: -67.0,
+    z: -6.2,
+    yaw: Math.PI,
+    reward: 'Bối cảnh Cốt Truyện Đêm 19:41',
+    desc: 'Con ngõ nhỏ trầm mặc lưu giữ ký ức đêm mưa năm 2008 và bí ẩn Tiếng Gọi Dưới Giếng Cổ.'
+  }
+];
+
+function worldToMapCanvas(wx, wz, width, height) {
+  const pad = 28;
+  const usableW = width - pad * 2;
+  const usableH = height - pad * 2;
+  const nx = (wx - WORLD_MAP_BOUNDS.minX) / (WORLD_MAP_BOUNDS.maxX - WORLD_MAP_BOUNDS.minX);
+  const nz = (wz - WORLD_MAP_BOUNDS.minZ) / (WORLD_MAP_BOUNDS.maxZ - WORLD_MAP_BOUNDS.minZ);
+  return {
+    cx: pad + nx * usableW,
+    cy: pad + nz * usableH
+  };
+}
+
+function mapCanvasToWorld(cx, cy, width, height) {
+  const pad = 28;
+  const usableW = width - pad * 2;
+  const usableH = height - pad * 2;
+  const nx = Math.max(0, Math.min(1, (cx - pad) / usableW));
+  const nz = Math.max(0, Math.min(1, (cy - pad) / usableH));
+  return {
+    x: WORLD_MAP_BOUNDS.minX + nx * (WORLD_MAP_BOUNDS.maxX - WORLD_MAP_BOUNDS.minX),
+    z: WORLD_MAP_BOUNDS.minZ + nz * (WORLD_MAP_BOUNDS.maxZ - WORLD_MAP_BOUNDS.minZ)
+  };
+}
+
+function teleportPlayerToPOI(poi) {
+  if (!poi) return;
+  if (horrorModeActive) {
+    showToast('⚠️ Không thể dịch chuyển nhanh khi đang trong cốt truyện ban đêm.');
+    return;
+  }
+  closeWorldMapModal();
+  const targetY = getGroundElevationAt(poi.x, poi.z);
+  playerGroup.position.set(poi.x, targetY, poi.z);
+  const yaw = poi.yaw ?? 0;
+  playerGroup.rotation.y = yaw;
+  const bikeSideOffset = playerState.isRidingBike ? 0 : 0.95;
+  playerMotorbike.position.set(
+    poi.x + Math.cos(yaw) * bikeSideOffset,
+    getGroundElevationAt(poi.x + Math.cos(yaw) * bikeSideOffset, poi.z - Math.sin(yaw) * bikeSideOffset),
+    poi.z - Math.sin(yaw) * bikeSideOffset
+  );
+  playerMotorbike.rotation.y = yaw;
+  rideMotion.heading = yaw;
+  rideMotion.speed = 0;
+  rideMotion.steer = 0;
+  rideMotion.lean = 0;
+  syncCameraYaw(yaw);
+  const hudLoc = document.getElementById('hud-location');
+  if (hudLoc) hudLoc.textContent = `📍 Đang đứng tại: ${poi.title}`;
+  playSoundEffect('quest');
+  showToast(`⚡ Đã dịch chuyển nhanh tới "${poi.title}"! Bấm [E] hoặc [G] để tham gia hoạt động ngay.`, 4500);
+  markProgressDirty();
+}
+
+function triggerPoiDirectPlay(poi) {
+  if (!poi) return;
+  closeWorldMapModal();
+  if (poi.playMode) {
+    openExpandedDistrictMiniGame(poi.playMode);
+    return;
+  }
+  if (poi.playAction === 'chess') {
+    if (playerState.isRidingBike) togglePlayerMotorbike();
+    arcadeController?.openDirect?.();
+  } else if (poi.playAction === 'fishing') {
+    openFishingMiniGame();
+  } else if (poi.playAction === 'jianzi') {
+    openJianziMiniGame();
+  } else if (poi.playAction === 'shrine') {
+    interactWithWorldProp({ type: 'peach_shrine', title: poi.title });
+  } else if (poi.playAction === 'garage') {
+    openShipperModal('orders');
+  } else if (poi.playAction === 'tycoon') {
+    openTycoonRushMiniGame();
+  } else if (poi.playAction === 'xoi') {
+    buyXoiFromStreetVendor();
+  }
+}
+
+function drawWorldMapCanvas() {
+  const canvas = document.getElementById('world-map-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+
+  // Nền bản đồ vệ tinh đêm xanh thẫm
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#061826');
+  bg.addColorStop(0.28, '#0b2232');
+  bg.addColorStop(1, '#09131f');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Dải Sông Hồng ở phía Bắc (z < -232) và phía Đông Bắc (x > 352)
+  const riverTopLeft = worldToMapCanvas(WORLD_MAP_BOUNDS.minX, WORLD_MAP_BOUNDS.minZ, W, H);
+  const riverDykeLine = worldToMapCanvas(WORLD_MAP_BOUNDS.maxX, -228, W, H);
+  const riverGrad = ctx.createLinearGradient(0, 0, 0, riverDykeLine.cy);
+  riverGrad.addColorStop(0, 'rgba(14, 116, 144, 0.58)');
+  riverGrad.addColorStop(1, 'rgba(2, 132, 199, 0.18)');
+  ctx.fillStyle = riverGrad;
+  ctx.fillRect(0, 0, W, riverDykeLine.cy);
+
+  // Nhãn Sông Hồng
+  ctx.fillStyle = 'rgba(125, 211, 252, 0.65)';
+  ctx.font = 'bold 13px "Segoe UI", sans-serif';
+  ctx.fillText('🌊 DÒNG SÔNG HỒNG & BÃI BỒI VEN ĐÊ AN DƯƠNG VƯƠNG', 36, 22);
+
+  // Lưới tọa độ mờ
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+  ctx.lineWidth = 1;
+  for (let gx = -200; gx <= 350; gx += 50) {
+    const p = worldToMapCanvas(gx, 0, W, H);
+    ctx.beginPath();
+    ctx.moveTo(p.cx, 0);
+    ctx.lineTo(p.cx, H);
+    ctx.stroke();
+  }
+  for (let gz = -200; gz <= 80; gz += 50) {
+    const p = worldToMapCanvas(0, gz, W, H);
+    ctx.beginPath();
+    ctx.moveTo(0, p.cy);
+    ctx.lineTo(W, p.cy);
+    ctx.stroke();
+  }
+
+  // Vẽ các vùng cảnh quan xanh (Vườn Đào, Công Viên, Vườn Tre, Chợ Phiên)
+  const zones = [
+    { x1: -225, z1: -65, x2: -140, z2: 32, color: 'rgba(244, 114, 182, 0.16)', label: '🌸 VƯỜN ĐÀO PHÚ THƯỢNG' },
+    { x1: 105, z1: -22, x2: 170, z2: 38, color: 'rgba(74, 222, 128, 0.16)', label: '🌳 CÔNG VIÊN & CHỢ HOA' },
+    { x1: 235, z1: -242, x2: 382, z2: -55, color: 'rgba(56, 189, 248, 0.14)', label: '🏮 KHU VEN SÔNG & CHỢ PHIÊN' },
+    { x1: -185, z1: -135, x2: -135, z2: -90, color: 'rgba(250, 204, 21, 0.14)', label: '🥁 SÂN ĐÌNH PHÚ XÁ' }
+  ];
+  zones.forEach((z) => {
+    const p1 = worldToMapCanvas(z.x1, z.z1, W, H);
+    const p2 = worldToMapCanvas(z.x2, z.z2, W, H);
+    ctx.fillStyle = z.color;
+    ctx.beginPath();
+    ctx.roundRect(p1.cx, p1.cy, p2.cx - p1.cx, p2.cy - p1.cy, 10);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.55)';
+    ctx.font = 'bold 10px "Segoe UI", sans-serif';
+    ctx.fillText(z.label, p1.cx + 6, p1.cy + 14);
+  });
+
+  // Vẽ toàn bộ hệ thống đường phố (DISTRICT_ROADS + Phố Chính Phú Thượng + Ngõ 41)
+  const drawRoadSegment = (ax, az, bx, bz, widthMeters, isMain = false) => {
+    const pA = worldToMapCanvas(ax, az, W, H);
+    const pB = worldToMapCanvas(bx, bz, W, H);
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = isMain ? 'rgba(148, 163, 184, 0.55)' : 'rgba(100, 116, 139, 0.42)';
+    ctx.lineWidth = Math.max(4, widthMeters * 0.9);
+    ctx.beginPath();
+    ctx.moveTo(pA.cx, pA.cy);
+    ctx.lineTo(pB.cx, pB.cy);
+    ctx.stroke();
+
+    ctx.strokeStyle = isMain ? '#334155' : '#1e293b';
+    ctx.lineWidth = Math.max(2.5, widthMeters * 0.65);
+    ctx.beginPath();
+    ctx.moveTo(pA.cx, pA.cy);
+    ctx.lineTo(pB.cx, pB.cy);
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  // Trục chính Phố Phú Thượng & Ngõ 41
+  drawRoadSegment(-165, 0, 145, 0, 11, true);
+  drawRoadSegment(-67, 0, -67, -50, 5.5, false);
+  drawRoadSegment(-90, 0, -90, -45, 5.0, false);
+  drawRoadSegment(-90, -41, -67, -41, 4.5, false);
+
+  // Các tuyến đường mở rộng trong DISTRICT_ROADS
+  DISTRICT_ROADS.forEach((r) => {
+    drawRoadSegment(r.ax, r.az, r.bx, r.bz, r.width || 8, r.width >= 10);
+  });
+
+  // Tên các tuyến đường lớn trên bản đồ
+  ctx.fillStyle = 'rgba(248, 250, 252, 0.72)';
+  ctx.font = 'bold 10.5px "Segoe UI", sans-serif';
+  const lblDyke = worldToMapCanvas(-60, -225, W, H);
+  ctx.fillText('ĐÊ AN DƯƠNG VƯƠNG', lblDyke.cx, lblDyke.cy - 6);
+  const lblMain = worldToMapCanvas(-35, 0, W, H);
+  ctx.fillText('PHỐ PHÚ THƯỢNG (TRỤC CHÍNH)', lblMain.cx, lblMain.cy + 15);
+  const lblPhuGia = worldToMapCanvas(42, -120, W, H);
+  ctx.fillText('PHỐ PHÚ GIA', lblPhuGia.cx + 6, lblPhuGia.cy);
+  const lblPhuXa = worldToMapCanvas(-162, -155, W, H);
+  ctx.fillText('PHỐ PHÚ XÁ', lblPhuXa.cx + 6, lblPhuXa.cy);
+
+  // Vẽ đường dẫn GPS đang kích hoạt (nếu có)
+  const activeTarget = getActiveGuidanceTarget();
+  if (activeTarget) {
+    const start = { x: playerGroup.position.x, z: playerGroup.position.z };
+    const waypoints = streetSidePath(start, activeTarget);
+    const fullPts = [start, ...(waypoints && waypoints.length ? waypoints : [activeTarget])];
+    ctx.save();
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 3.2;
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath();
+    fullPts.forEach((pt, idx) => {
+      const mp = worldToMapCanvas(pt.x, pt.z, W, H);
+      if (idx === 0) ctx.moveTo(mp.cx, mp.cy);
+      else ctx.lineTo(mp.cx, mp.cy);
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Vẽ tất cả các điểm POI
+  const catColors = {
+    expanded: '#f43f5e',
+    minigame: '#4ade80',
+    quest: '#facc15',
+    service: '#c084fc'
+  };
+
+  const visiblePois = WORLD_MAP_POIS.filter((p) => activeMapCategory === 'all' || p.category === activeMapCategory);
+  visiblePois.forEach((poi) => {
+    const mp = worldToMapCanvas(poi.x, poi.z, W, H);
+    const isSel = poi.id === selectedMapPoiId;
+    const col = catColors[poi.category] || '#fde047';
+
+    if (isSel) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(mp.cx, mp.cy, 15, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
+      ctx.fill();
+      ctx.lineWidth = 2.2;
+      ctx.strokeStyle = '#fde047';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.beginPath();
+    ctx.arc(mp.cx, mp.cy, isSel ? 9.5 : 7.5, 0, Math.PI * 2);
+    ctx.fillStyle = col;
+    ctx.fill();
+    ctx.lineWidth = 1.8;
+    ctx.strokeStyle = '#0f172a';
+    ctx.stroke();
+
+    ctx.font = '12px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(poi.icon, mp.cx, mp.cy - 14);
+  });
+
+  // Vẽ vị trí hiện tại của Người chơi + Mũi tên hướng nhìn
+  const playerMp = worldToMapCanvas(playerGroup.position.x, playerGroup.position.z, W, H);
+  ctx.save();
+  ctx.translate(playerMp.cx, playerMp.cy);
+  const heading = minimapHeadingAngle(camYaw, playerState.isRidingBike, rideMotion.heading);
+  ctx.rotate(heading);
+  ctx.fillStyle = '#38bdf8';
+  ctx.beginPath();
+  ctx.moveTo(0, -11);
+  ctx.lineTo(7.5, 8);
+  ctx.lineTo(0, 4);
+  ctx.lineTo(-7.5, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.lineWidth = 1.8;
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderWorldMapSidebar() {
+  const selectedCard = document.getElementById('world-map-selected-card');
+  const listEl = document.getElementById('world-map-poi-list');
+  if (!selectedCard || !listEl) return;
+
+  const filtered = WORLD_MAP_POIS.filter((p) => activeMapCategory === 'all' || p.category === activeMapCategory);
+  const sel = WORLD_MAP_POIS.find((p) => p.id === selectedMapPoiId) || filtered[0] || WORLD_MAP_POIS[0];
+  if (sel) selectedMapPoiId = sel.id;
+
+  const dist = Math.round(Math.hypot(playerGroup.position.x - sel.x, playerGroup.position.z - sel.z));
+  const hasDirectPlay = Boolean(sel.playMode || sel.playAction);
+
+  selectedCard.innerHTML = `
+    <div style="font-size:11px; font-weight:800; color:#38bdf8; text-transform:uppercase;">📍 ${sel.zone} · Cách bạn ${dist}m</div>
+    <h4>${sel.icon} ${sel.title}</h4>
+    <p>${sel.desc}</p>
+    <div class="world-map-selected-meta">
+      <span>🎁 ${sel.reward}</span>
+      <span>📐 Tọa độ: (${Math.round(sel.x)}, ${Math.round(sel.z)})</span>
+    </div>
+    <div class="world-map-selected-actions">
+      <button type="button" id="map-act-teleport" class="choice-btn primary">⚡ Dịch Chuyển Tới Ngay</button>
+      <button type="button" id="map-act-gps" class="choice-btn">🧭 Dẫn Đường GPS</button>
+      ${hasDirectPlay ? `<button type="button" id="map-act-play" class="choice-btn primary" style="background:#059669; border-color:#34d399;">🎮 Mở Chơi Ngay</button>` : ''}
+    </div>
+  `;
+
+  selectedCard.querySelector('#map-act-teleport')?.addEventListener('click', () => teleportPlayerToPOI(sel));
+  selectedCard.querySelector('#map-act-gps')?.addEventListener('click', () => {
+    closeWorldMapModal();
+    gameSettings.showWaypoints = true;
+    guideToInventoryTarget({ x: sel.x, z: sel.z, title: sel.title });
+    showToast(`🧭 Đã bật đường dẫn GPS bám theo mặt phố tới "${sel.title}"!`, 4500);
+  });
+  selectedCard.querySelector('#map-act-play')?.addEventListener('click', () => triggerPoiDirectPlay(sel));
+
+  listEl.innerHTML = '';
+  filtered.forEach((poi) => {
+    const d = Math.round(Math.hypot(playerGroup.position.x - poi.x, playerGroup.position.z - poi.z));
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `map-poi-item ${poi.id === selectedMapPoiId ? 'active' : ''}`;
+    btn.innerHTML = `
+      <div>
+        <strong>${poi.icon} ${poi.title}</strong>
+        <small>${poi.zone} · ${poi.reward}</small>
+      </div>
+      <span class="map-poi-dist">${d}m</span>
+    `;
+    btn.addEventListener('click', () => {
+      selectedMapPoiId = poi.id;
+      renderWorldMapSidebar();
+      drawWorldMapCanvas();
+    });
+    listEl.appendChild(btn);
+  });
+}
+
+function openWorldMapModal() {
+  if (isSettingsOpen) closeSettingsModal();
+  if (isJournalOpen) closeJournalModal();
+  if (isInventoryOpen) closeInventoryModal();
+  if (isShipperModalOpen) closeShipperModal();
+  if (isParkMiniGameOpen) closeParkMiniGame();
+
+  isWorldMapOpen = true;
+  isDialogueOpen = true;
+  if (document.pointerLockElement) document.exitPointerLock?.();
+
+  const modal = document.getElementById('world-map-modal');
+  if (modal) modal.classList.remove('hidden');
+  renderWorldMapSidebar();
+  drawWorldMapCanvas();
+}
+
+function closeWorldMapModal() {
+  isWorldMapOpen = false;
+  isDialogueOpen = false;
+  document.getElementById('world-map-modal')?.classList.add('hidden');
+}
+
+function toggleWorldMapModal() {
+  if (isWorldMapOpen) closeWorldMapModal();
+  else openWorldMapModal();
+}
+
+document.getElementById('world-map-btn')?.addEventListener('click', toggleWorldMapModal);
+document.getElementById('world-map-close-top')?.addEventListener('click', closeWorldMapModal);
+document.getElementById('minimap-container')?.addEventListener('click', toggleWorldMapModal);
+document.getElementById('minimap-container')?.addEventListener('keydown', (e) => {
+  if (e.code === 'Enter' || e.code === 'Space') {
+    e.preventDefault();
+    toggleWorldMapModal();
+  }
+});
+
+document.querySelectorAll('#world-map-filter-bar button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    activeMapCategory = btn.getAttribute('data-map-cat') || 'all';
+    document.querySelectorAll('#world-map-filter-bar button').forEach((b) => b.classList.toggle('active', b === btn));
+    renderWorldMapSidebar();
+    drawWorldMapCanvas();
+  });
+});
+
+document.getElementById('world-map-canvas')?.addEventListener('click', (ev) => {
+  const canvas = ev.currentTarget;
+  const rect = canvas.getBoundingClientRect();
+  const cx = ((ev.clientX - rect.left) / rect.width) * canvas.width;
+  const cy = ((ev.clientY - rect.top) / rect.height) * canvas.height;
+
+  // Tìm xem người chơi có click trúng POI nào không
+  const visiblePois = WORLD_MAP_POIS.filter((p) => activeMapCategory === 'all' || p.category === activeMapCategory);
+  let bestPoi = null;
+  let bestDist = 18;
+  visiblePois.forEach((poi) => {
+    const mp = worldToMapCanvas(poi.x, poi.z, canvas.width, canvas.height);
+    const d = Math.hypot(cx - mp.cx, cy - mp.cy);
+    if (d < bestDist) {
+      bestDist = d;
+      bestPoi = poi;
+    }
+  });
+
+  if (bestPoi) {
+    selectedMapPoiId = bestPoi.id;
+    playSoundEffect('coin');
+    renderWorldMapSidebar();
+    drawWorldMapCanvas();
+  } else {
+    // Nếu click vào điểm bất kỳ trên đường, đặt điểm dẫn đường GPS tùy chỉnh tới đó
+    const worldPt = mapCanvasToWorld(cx, cy, canvas.width, canvas.height);
+    const roadSnap = nearestRoad(worldPt.x, worldPt.z);
+    const targetX = roadSnap ? roadSnap.x : worldPt.x;
+    const targetZ = roadSnap ? roadSnap.z : worldPt.z;
+    guideToInventoryTarget({
+      x: targetX,
+      z: targetZ,
+      title: `Điểm Đánh Dấu Bản Đồ (${Math.round(targetX)}, ${Math.round(targetZ)})`
+    });
+    drawWorldMapCanvas();
+  }
+});
 document.getElementById('shipper-close-btn')?.addEventListener('click', closeShipperModal);
 document.getElementById('tab-btn-orders')?.addEventListener('click', () => {
   selectShipperTab('orders');
@@ -12792,7 +14609,7 @@ function applyTimeOfDay(hr) {
   } else if (hr >= 16.2) {
     scene.fog.color.setHex(0xfed7aa);
     sunLight.intensity = 2.1 * brightFactor;
-    sunLight.color.setHex(0xfb923c);
+    sunLight.color.setHex(0xffc79b);
     hemiLight.intensity = 0.92 * brightFactor;
     if (skyDomeMesh?.material) skyDomeMesh.material.color.setHex(0xfdba74);
     if ('environmentIntensity' in scene) scene.environmentIntensity = 0.58;
@@ -12801,12 +14618,19 @@ function applyTimeOfDay(hr) {
     scene.fog.color.setHex(0xd8ecfa);
     sunLight.intensity = 2.5 * brightFactor;
     sunLight.color.setHex(0xfff8dc);
-    hemiLight.intensity = 1.05 * brightFactor;
+    hemiLight.intensity = 1.28 * brightFactor;
     if (skyDomeMesh?.material) skyDomeMesh.material.color.setHex(0xffffff);
     if ('environmentIntensity' in scene) scene.environmentIntensity = 0.74;
     periodLabel = 'Nắng Đẹp';
   }
 
+  if(!horrorModeActive){
+    const lighting=environmentLighting(hr);
+    sunLight.intensity=lighting.sun*brightFactor;hemiLight.intensity=lighting.hemi*brightFactor;
+    sunLight.color.copy(lighting.sunColor);scene.fog.color.copy(lighting.fog);
+    if(skyDomeMesh?.material)skyDomeMesh.material.color.copy(lighting.sky);
+    if('environmentIntensity' in scene)scene.environmentIntensity=lighting.environment;
+  }
   // Cập nhật vị trí và sắc thái Mặt Trời / Mặt Trăng trên vòm trời
   const skyUd = skyDomeMesh?.userData;
   if (skyUd?.celestialGroup) {
@@ -12963,7 +14787,7 @@ function drawMinimap() {
   drawRect(0, -21, 27, 11, 'rgba(245, 158, 11, 0.45)', 'UBND Phường');
   drawRect(9.5, 20, 27, 13, 'rgba(59, 130, 246, 0.45)', 'THPT Tây Hồ (41)');
   drawRect(-73, -29.2, 8, 9, 'rgba(250, 204, 21, 0.55)', 'Nhà Số 41');
-  drawRect(ARCADE_SHOP.x, ARCADE_SHOP.z, ARCADE_SHOP.width, ARCADE_SHOP.depth, 'rgba(205, 167, 86, 0.8)', '♠ Tiệm giải trí');
+  drawRect(ARCADE_SHOP.x, ARCADE_SHOP.z, ARCADE_SHOP.width, ARCADE_SHOP.depth, 'rgba(205, 167, 86, 0.8)', '♟ Cờ tướng · Trà đá');
   drawRect(-90, -42, 9, 7, 'rgba(16, 185, 129, 0.48)', 'Quán Xôi');
   drawRect(64, 22, 26, 12, 'rgba(168, 85, 247, 0.4)', 'TH Tiểu Học');
   drawRect(134, -15, 42, 15, 'rgba(244, 63, 94, 0.42)', 'Chợ Hoa');
@@ -12987,13 +14811,17 @@ function drawMinimap() {
     const cp = activeShipperRun.route.checkpoints[activeShipperRun.cpIndex];
     if (cp) {
       const m = toMap(cp.x, cp.z);
+      const path = guidancePath(cp);
       mctx.save();
       mctx.strokeStyle = '#38bdf8';
-      mctx.lineWidth = 2.2;
+      mctx.lineWidth = 2.4;
       mctx.setLineDash([4, 3]);
       mctx.beginPath();
       mctx.moveTo(cx, cy);
-      mctx.lineTo(m.x, m.y);
+      for (const point of path) {
+        const pt = toMap(point.x, point.z);
+        mctx.lineTo(pt.x, pt.y);
+      }
       mctx.stroke();
       mctx.restore();
       mctx.beginPath();
@@ -13005,29 +14833,34 @@ function drawMinimap() {
       mctx.stroke();
     }
   }
-  if(gameSettings.showWaypoints!==false){
+  if(gameSettings.showWaypoints!==false && !activeShipperRun){
     const target=getActiveGuidanceTarget();
-    if(target&&(target.z<-55||target.z>55||target.x>162||target.x<-182||playerGroup.position.z<-55||playerGroup.position.z>55||playerGroup.position.x>162||playerGroup.position.x<-182)){
-      const path=guidancePath(target);mctx.save();mctx.strokeStyle='#b8dfb8';mctx.lineWidth=2;mctx.setLineDash([4,3]);mctx.beginPath();mctx.moveTo(cx,cy);
-      for(const point of path){const p=toMap(point.x,point.z);mctx.lineTo(p.x,p.y);}mctx.stroke();mctx.restore();
+    if(target){
+      const path=guidancePath(target);
+      mctx.save();
+      mctx.strokeStyle='#38bdf8';
+      mctx.lineWidth=2.2;
+      mctx.setLineDash([4,3]);
+      mctx.beginPath();
+      mctx.moveTo(cx,cy);
+      for(const point of path){const p=toMap(point.x,point.z);mctx.lineTo(p.x,p.y);}
+      mctx.stroke();
+      mctx.restore();
+      const destM=toMap(target.x,target.z);
+      mctx.beginPath();
+      mctx.arc(destM.x,destM.y,5.2,0,Math.PI*2);
+      mctx.fillStyle='#38bdf8';
+      mctx.fill();
+      mctx.lineWidth=1.8;
+      mctx.strokeStyle='#fef08a';
+      mctx.stroke();
     }
   }
 
-  // Vẽ đường dẫn GPS & điểm mục tiêu Cốt Truyện Đơn Hàng Số 41 trên Minimap
+  // Vẽ điểm mục tiêu Cốt Truyện Đơn Hàng Số 41 trên Minimap
   horrorChapterEvents.forEach((marker) => {
     if (!marker.visible) return;
     const m = toMap(marker.position.x, marker.position.z);
-    if (gameSettings.showWaypoints !== false) {
-      mctx.save();
-      mctx.strokeStyle = '#facc15';
-      mctx.lineWidth = 2;
-      mctx.setLineDash([4, 3]);
-      mctx.beginPath();
-      mctx.moveTo(cx, cy);
-      mctx.lineTo(m.x, m.y);
-      mctx.stroke();
-      mctx.restore();
-    }
     mctx.beginPath();
     mctx.arc(m.x, m.y, 5.5, 0, Math.PI * 2);
     mctx.fillStyle = '#ef4444';
@@ -13079,7 +14912,7 @@ function drawMinimap() {
 
   mctx.save();
   mctx.translate(cx, cy);
-  mctx.rotate(minimapHeadingAngle(playerState.isRidingBike?rideMotion.heading:playerGroup.rotation.y));
+  mctx.rotate(minimapHeadingAngle(playerState.isRidingBike?rideMotion.heading:(camMode==='fps'?camYaw:playerGroup.rotation.y)));
   mctx.fillStyle = '#38bdf8';
   mctx.beginPath();
   mctx.moveTo(0, -7);
@@ -13217,7 +15050,12 @@ const streetObstacles=[];
 const singleTrafficObstacle=[{x:0,z:0,radius:0,lateralRadius:0}];
 const junctionOwners=new Map(),junctionSince=new Map(),junctionYieldUntil=new Map();
 function updateStreetTraffic(delta, elapsed) {
-  for(const [index,id] of junctionOwners){const j=TRAFFIC_JUNCTIONS[index],v=animatedTraffic.find(a=>a.id===id);if(!v||v.pursuing||Math.hypot(v.mesh.position.x-j.x,v.mesh.position.z-j.z)>14)junctionOwners.delete(index);else if(v.currentSpeed<.1&&elapsed-(junctionSince.get(index)||0)>5&&Math.hypot(v.mesh.position.x-j.x,v.mesh.position.z-j.z)>7){junctionYieldUntil.set(index+':'+id,elapsed+3);junctionOwners.delete(index);}}
+  for(const v of animatedTraffic)v.blockedFor=v.currentSpeed<.15&&!v.pursuing&&!(v.dwell>0)?(v.blockedFor||0)+Math.min(delta,.1):0;
+  if(!animatedTraffic.some(v=>(v.recoveryUntil||0)>elapsed)){
+    const jam=gridlockPair(animatedTraffic);
+    if(jam){jam.yielding.recoveryUntil=elapsed+4;jam.yielding.blockedFor=0;policeController?.reportCollision(jam.yielding.mesh.position.x,jam.yielding.mesh.position.z,4,'jam');}
+  }
+  for(const [index,id] of junctionOwners){const j=TRAFFIC_JUNCTIONS[index],v=animatedTraffic.find(a=>a.id===id);if(!v||v.pursuing||Math.hypot(v.mesh.position.x-j.x,v.mesh.position.z-j.z)>14)junctionOwners.delete(index);else if(v.currentSpeed<.1&&elapsed-(junctionSince.get(index)||0)>5){junctionYieldUntil.set(index+':'+id,elapsed+3);junctionOwners.delete(index);}}
 
   streetObstacles.length=0;
   streetObstacles.push({x:playerGroup.position.x,z:playerGroup.position.z,radius:playerState.isRidingBike?.9:.42});
@@ -13226,6 +15064,16 @@ function updateStreetTraffic(delta, elapsed) {
   for(const officer of policeController?.officers||[])if(officer.group.visible)streetObstacles.push({x:officer.group.position.x,z:officer.group.position.z,radius:.38});
   animatedTraffic.forEach((vehicle) => {
     if(vehicle.pursuing)return;
+    if((vehicle.recoveryUntil||0)>elapsed){
+      const progress=(vehicle.progress-1.3*Math.min(delta,.1)/vehicle.routeLength+1)%1;
+      vehicle.route.getPointAt(progress,trafficPoint);vehicle.route.getTangentAt(progress,trafficTangent).normalize();
+      const current={x:vehicle.mesh.position.x,z:vehicle.mesh.position.z,yaw:vehicle.yaw,kind:vehicle.kind};
+      const candidate={x:trafficPoint.x,z:trafficPoint.z,yaw:Math.atan2(-trafficTangent.z,trafficTangent.x),kind:vehicle.kind};
+      if(safeRecoveryStep(current,candidate,animatedTraffic.filter(o=>o!==vehicle).map(o=>({x:o.mesh.position.x,z:o.mesh.position.z,yaw:o.yaw,kind:o.kind})),streetObstacles)){
+        vehicle.progress=progress;vehicle.mesh.position.set(candidate.x,getGroundElevationAt(candidate.x,candidate.z)+.02,candidate.z);vehicle.yaw=candidate.yaw;vehicle.mesh.rotation.y=candidate.yaw;
+      }
+      vehicle.currentSpeed=0;return;
+    }
     vehicle.route.getPointAt(vehicle.progress,trafficPoint);
     vehicle.route.getTangentAt(vehicle.progress,trafficTangent).normalize();
     let gap=forwardClearance(trafficPoint.x,trafficPoint.z,trafficTangent.x,trafficTangent.z,streetObstacles,vehicle.kind==='bus'?1.18:vehicle.kind==='car'?.98:.5,vehicle.kind==='bus'?3.6:vehicle.kind==='car'?2.18:1.12);
@@ -13306,6 +15154,8 @@ let frameStatsAccumulator = 0;
 let smoothedDelta = 1 / 60;
 let landingImpactDip = 0;
 let lastInteractLabelText = '';
+const _camDir = new THREE.Vector3();
+const _sunDir = new THREE.Vector3();
 let lastInteractHidden = true;
 const _tmpDesiredCamPos = new THREE.Vector3();
 const _tmpDesiredCamLook = new THREE.Vector3();
@@ -13403,20 +15253,50 @@ function animate() {
     } else {
       isNitroBoosting = false;
       const petNitroBonus = garageState.equippedPet === 'shiba_shipper' ? 1.25 : 1.0;
-      const rechargeRate = (9 + garageState.upgrades.nitro * 4.5) * petNitroBonus;
+      const buffNitroBonus = hasActiveBuff('tra_da') ? 2.0 : 1.0;
+      const rechargeRate = (9 + garageState.upgrades.nitro * 4.5) * petNitroBonus * buffNitroBonus;
       nitroFuel = Math.min(100, nitroFuel + rechargeRate * delta);
     }
 
-    const forwardLimit = getBikeMaxForwardSpeed(isNitroBoosting);
+    const forwardLimit = getBikeMaxForwardSpeed(isNitroBoosting) * (hasActiveBuff('xoi') ? 1.2 : 1.0);
     const targetSpeed = throttle > 0 ? forwardLimit : throttle < 0 ? -5.8 : 0;
     const changingDirection = targetSpeed !== 0 && Math.sign(targetSpeed) !== Math.sign(rideMotion.speed);
-    const baseAccel = 2.25 * bikeMeta.accelMult * (1 + garageState.upgrades.engine * 0.12) * (isNitroBoosting ? 1.85 : 1);
+    const baseAccel = 2.25 * bikeMeta.accelMult * (1 + garageState.upgrades.engine * 0.12) * (isNitroBoosting ? 1.85 : 1) * (hasActiveBuff('xoi') ? 1.3 : 1.0);
     const speedRate = changingDirection ? 8.0 : targetSpeed === 0 ? 2.8 : baseAccel;
-    // Brake against real frame time: capped/smoothed movement time made braking
-    // visibly sluggish when frame rate dropped. Never carry a hidden-tab pause.
-    rideMotion.speed = brakeHeld?brakeBikeSpeed(rideMotion.speed,Math.min(rawDelta,.25)):smoothValue(rideMotion.speed, targetSpeed, speedRate, delta);
-    const brakeStatus=document.getElementById('speedo-brake-status');
-    if(brakeStatus){brakeStatus.textContent=brakeHeld?'PHANH ●':'Space: phanh · Y: dẫn đường · Tab: chuột';brakeStatus.classList.toggle('braking',brakeHeld);}
+    
+    // Xử lý cơ chế Drift / Trượt bánh ôm cua thể thao (Power Drift)
+    const isDriftAction = brakeHeld && steerInput !== 0 && Math.abs(rideMotion.speed) > 5.5;
+    const brakeStatus = document.getElementById('speedo-brake-status');
+    if (isDriftAction) {
+      isBikeDrifting = true;
+      bikeDriftScore += delta * (hasActiveBuff('tra_da') ? 130 : 85);
+      const driftRate = hasActiveBuff('tra_da') ? 3.4 : 2.6;
+      rideMotion.heading += steerInput * driftRate * Math.sign(rideMotion.speed) * delta;
+      rideMotion.speed = smoothValue(rideMotion.speed, rideMotion.speed * 0.982, 2.2, delta);
+      spawnDriftSmoke(playerGroup.position, rideMotion.heading);
+      if (brakeStatus) {
+        brakeStatus.textContent = 'DRIFT TRƯỢT ÔM CUA 🔥';
+        brakeStatus.classList.add('braking');
+      }
+    } else {
+      if (isBikeDrifting) {
+        if (bikeDriftScore >= 30) {
+          const driftXp = Math.round(bikeDriftScore * 0.45);
+          const driftCash = Math.round(bikeDriftScore * 25);
+          addRewards(driftCash, driftXp);
+          nitroFuel = Math.min(100, nitroFuel + 25);
+          playSoundEffect('quest');
+          triggerActionStuntPopup(`🔥 CÚ DRIFT MÃN NHÃN! +${driftXp} XP · +${driftCash.toLocaleString('vi-VN')}đ`);
+        }
+        isBikeDrifting = false;
+        bikeDriftScore = 0;
+      }
+      rideMotion.speed = brakeHeld ? brakeBikeSpeed(rideMotion.speed, Math.min(rawDelta, 0.25)) : smoothValue(rideMotion.speed, targetSpeed, speedRate, delta);
+      if (brakeStatus) {
+        brakeStatus.textContent = brakeHeld ? 'PHANH ●' : 'Space: phanh/drift · Q: trực giác radar · Tab: chuột';
+        brakeStatus.classList.toggle('braking', brakeHeld);
+      }
+    }
     if (Math.abs(rideMotion.speed) < 0.035) rideMotion.speed = 0;
 
     // Shift boosts; Space always brakes and cancels boost, including W+Shift+Space.
@@ -13487,6 +15367,7 @@ function animate() {
 
     const travelled = Math.hypot(playerGroup.position.x - previousX, playerGroup.position.z - previousZ);
     if (bikeBlocked) {
+      policeController?.reportCollision(playerGroup.position.x,playerGroup.position.z,rideMotion.speed);
       if (activeShipperRun && absoluteSpeed > 9.5) {
         const armorFactor = Math.max(0.25, 1 - garageState.upgrades.cargo * 0.25);
         activeShipperRun.cargoHealth = Math.max(25, activeShipperRun.cargoHealth - 4.5 * armorFactor);
@@ -13507,17 +15388,19 @@ function animate() {
             activeShipperRun.maxCombo = Math.max(activeShipperRun.maxCombo, activeShipperRun.combo);
             activeShipperRun.nearMissCount += 1;
           }
-          playerState.coins += stuntCash;
-          updatePlayerHUD();
+          addRewards(stuntCash, 20);
           playSoundEffect('coin');
+          triggerActionStuntPopup(`⚡ LÁCH XE SUÝT CHẠM! +${stuntCash.toLocaleString('vi-VN')}đ · +20 XP · +18% NITRO!`);
           triggerStuntBanner(`⚡ LÁCH XE SIÊU ĐẲNG! +${stuntCash.toLocaleString('vi-VN')}đ · +18% NITRO${activeShipperRun ? ` · COMBO x${activeShipperRun.combo.toFixed(1)}` : ''}`);
         }
       });
     }
     rideMotion.lean = smoothValue(
       rideMotion.lean,
-      THREE.MathUtils.clamp(rideMotion.steer * absoluteSpeed / 42, -0.3, 0.3),
-      8,
+      isDriftAction
+        ? THREE.MathUtils.clamp(-steerInput * 0.46, -0.48, 0.48)
+        : THREE.MathUtils.clamp(rideMotion.steer * absoluteSpeed / 42, -0.3, 0.3),
+      10,
       delta
     );
     spinMotorbikeWheels(playerBikeMesh, travelled * Math.sign(rideMotion.speed || 1));
@@ -13550,11 +15433,15 @@ function animate() {
     let targetSpeed = 0;
     if (isMoving) {
       desiredFootBodyYaw = camMode === 'fps' ? camYaw : moveAngle;
-      targetSpeed = canSprint ? 9.6 : 5.2;
+      targetSpeed = canSprint ? (hasActiveBuff('xoi') ? 12.8 : 9.6) : (hasActiveBuff('xoi') ? 6.8 : 5.2);
       if (canSprint) {
-        playerState.stamina = Math.max(0, playerState.stamina - delta * 8);
+        if (!hasActiveBuff('xoi')) {
+          playerState.stamina = Math.max(0, playerState.stamina - delta * 8);
+        } else {
+          playerState.stamina = 100;
+        }
       } else {
-        playerState.stamina = Math.min(100, playerState.stamina + delta * 10);
+        playerState.stamina = Math.min(100, playerState.stamina + delta * (hasActiveBuff('xoi') ? 22 : 10));
       }
     } else {
       playerState.stamina = Math.min(100, playerState.stamina + delta * 14);
@@ -13838,7 +15725,14 @@ function animate() {
     animatedWorldProps.forEach((wp) => {
       if (wp.type === 'fountain') {
         wp.jet.scale.y = 0.85 + Math.sin(elapsed * 7.8) * 0.22;
+        wp.jet.scale.x = 1.0 + Math.sin(elapsed * 5.5) * 0.08;
+        wp.jet.scale.z = 1.0 + Math.sin(elapsed * 5.5) * 0.08;
         wp.jet.rotation.y = elapsed * 2.5;
+        if (wp.waterMat) {
+          wp.waterMat.emissiveIntensity = 0.22 + Math.sin(elapsed * 2.6) * 0.08;
+          wp.waterMat.roughness = 0.12 + Math.sin(elapsed * 3.8) * 0.04;
+        }
+        if (wp.pool) wp.pool.rotation.y = elapsed * 0.08;
       } else if (wp.type === 'swing') {
         const isRidingSwing = activePropSession?.prop?.id === 'park_swing';
         const pumpBoost = (keys.w || keys.s) ? 0.68 : 0.48;
@@ -14164,33 +16058,75 @@ function animate() {
     autumnParticles.geometry.attributes.position.needsUpdate = true;
   }
 
-  // Cập nhật Dải Mũi Tên Dẫn Đường GPS 3D dưới mặt đất hướng về mục tiêu hiện tại
+  // Cập nhật Dải Mũi Tên Dẫn Đường GPS 3D uốn theo lộ trình đường phố (không đâm xuyên tường) & Cột sáng đích đến
   if (gpsGuideGroup) {
     const showGps = gameSettings.showWaypoints !== false;
     const destination = showGps ? getActiveGuidanceTarget() : null;
-    const guideTarget = destination&&!horrorModeActive?nextDistrictWaypoint(playerGroup.position,guidancePath(destination)):destination;
-    if (guideTarget) {
-      const gx = guideTarget.x - playerGroup.position.x;
-      const gz = guideTarget.z - playerGroup.position.z;
-      const gDist = Math.hypot(gx, gz);
-      gpsGuideGroup.visible = gDist > 3.2;
+    if (destination) {
+      const fullPath = [{ x: playerGroup.position.x, z: playerGroup.position.z }, ...guidancePath(destination)];
+      const totalDist = Math.hypot(destination.x - playerGroup.position.x, destination.z - playerGroup.position.z);
+      gpsGuideGroup.visible = totalDist > 2.4;
       if (gpsGuideGroup.visible) {
-        const dirAngle = Math.atan2(gx, gz);
-        const ux = gx / gDist;
-        const uz = gz / gDist;
+        const sampleAlongPath = (distFromStart) => {
+          let acc = 0;
+          for (let i = 1; i < fullPath.length; i++) {
+            const a = fullPath[i - 1];
+            const b = fullPath[i];
+            const segLen = Math.hypot(b.x - a.x, b.z - a.z);
+            if (segLen < 0.01) continue;
+            if (acc + segLen >= distFromStart || i === fullPath.length - 1) {
+              const t = Math.max(0, Math.min(1, (distFromStart - acc) / segLen));
+              return {
+                x: a.x + (b.x - a.x) * t,
+                z: a.z + (b.z - a.z) * t,
+                angle: Math.atan2(b.x - a.x, b.z - a.z)
+              };
+            }
+            acc += segLen;
+          }
+          const last = fullPath.at(-1);
+          return { x: last.x, z: last.z, angle: 0 };
+        };
+
+        const hexColor = horrorModeActive ? 0xfbbf24 : 0x38bdf8;
+        const emissiveHex = horrorModeActive ? 0xd97706 : 0x0284c7;
         gpsChevrons.forEach((chev, idx) => {
-          const flow = ((elapsed * 1.8 + idx * 0.2) % 1);
-          const stepDist = 1.45 + idx * 0.82 + flow * 0.6;
-          const cx = playerGroup.position.x + ux * stepDist;
-          const cz = playerGroup.position.z + uz * stepDist;
+          const flow = ((elapsed * 2.1 + idx * 0.14) % 1);
+          const stepDist = 1.6 + idx * 1.35 + flow * 1.1;
+          if (stepDist > totalDist - 0.6) {
+            chev.visible = false;
+            return;
+          }
+          chev.visible = true;
+          const pt = sampleAlongPath(stepDist);
+          const pulse = 0.92 + Math.sin(elapsed * 5 - idx * 0.6) * 0.12;
           chev.position.set(
-            cx,
-            getGroundElevationAt(cx, cz) + 0.045,
-            cz
+            pt.x,
+            getGroundElevationAt(pt.x, pt.z) + 0.065,
+            pt.z
           );
-          chev.rotation.y = dirAngle;
-          chev.material.color.setHex(horrorModeActive ? 0xfbbf24 : 0x38bdf8);
+          chev.rotation.y = pt.angle;
+          chev.scale.set(pulse, 1, pulse);
+          chev.material.color.setHex(hexColor);
+          chev.material.emissive?.setHex(emissiveHex);
         });
+
+        if (gpsTargetBeacon) {
+          gpsTargetBeacon.visible = true;
+          const by = getGroundElevationAt(destination.x, destination.z);
+          gpsTargetBeacon.position.set(destination.x, by, destination.z);
+          const { ringMesh, pillarMesh, diamondMesh } = gpsTargetBeacon.userData;
+          if (ringMesh) {
+            const s = 1 + Math.sin(elapsed * 3.8) * 0.14;
+            ringMesh.scale.set(s, s, 1);
+            ringMesh.material.color.setHex(hexColor);
+          }
+          if (pillarMesh) pillarMesh.material.color.setHex(hexColor);
+          if (diamondMesh) {
+            diamondMesh.position.y = 2.35 + Math.sin(elapsed * 3.2) * 0.22;
+            diamondMesh.rotation.y = elapsed * 2.4;
+          }
+        }
       }
     } else {
       gpsGuideGroup.visible = false;
@@ -14288,6 +16224,16 @@ function animate() {
     });
   }
 
+  if(!horrorModeActive)separatePedestrians([
+    ...dynamicWalkers.map(w=>({group:w.group,fixed:w.isQuestNPC||w.speed<=0})),
+    ...npcList.map(group=>({group,fixed:true})),
+    ...(policeController?.officers||[]).map(o=>({group:o.group,fixed:false}))
+  ],p=>{
+    const prior={...p};constrainPedestrian(p,prior);
+    if(Math.hypot(p.x-prior.x,p.z-prior.z)>.02)return false;
+    boxCollisionGrid.query(p.x,p.z,.38,nearbyCameraBoxes);
+    return !nearbyCameraBoxes.some(i=>{const b=boxColliders[i];return p.x>b.minX-.3&&p.x<b.maxX+.3&&p.z>b.minZ-.3&&p.z<b.maxZ+.3;});
+  });
   nearestNPC = null;
   let minDist = 4.8;
   npcList.forEach((npc, idx) => {
@@ -14727,6 +16673,102 @@ function animate() {
     storyFoodStall.neon.scale.setScalar(neonPulse);
   }
 
+  // Trôi mây êm dịu trên vòm trời Poly Haven 2K
+  if (skyDomeMesh) {
+    skyDomeMesh.rotation.y = elapsed * 0.0022;
+  }
+  // Gió thu lay động tán cây bàng & chậu cảnh bonsai Chợ Hoa
+  if (animatedVegetation.length > 0) {
+    const windTime = elapsed * 1.6;
+    for (let i = 0; i < animatedVegetation.length; i++) {
+      const v = animatedVegetation[i];
+      v.obj.rotation.z = Math.sin(windTime + v.phase) * v.amp;
+      v.obj.rotation.x = Math.cos(windTime * 0.75 + v.phase) * (v.amp * 0.6);
+    }
+  }
+  // Đèn lồng đỏ & bóng đèn phố đung đưa trong gió
+  if (animatedLanterns.length > 0) {
+    const lanternTime = elapsed * 2.2;
+    for (let i = 0; i < animatedLanterns.length; i++) {
+      const l = animatedLanterns[i];
+      l.mesh.rotation.z = Math.sin(lanternTime + l.phase) * l.amp;
+      l.mesh.rotation.x = Math.cos(lanternTime * 0.85 + l.phase) * (l.amp * 0.5);
+    }
+  }
+  // Cập nhật hiệu ứng quầng sáng mặt trời, tia nắng Volumetric God-Rays & quang sai ống kính camera
+  if (cinematicPass) {
+    cinematicPass.uniforms.time.value = elapsed;
+    if (!horrorModeActive && playerState.time >= 6.2 && playerState.time <= 18.0) {
+      camera.getWorldDirection(_camDir);
+      _sunDir.copy(sunLight.position).sub(sunLight.target.position).normalize();
+      const alignment = Math.max(0, _camDir.dot(_sunDir));
+      const flareTarget = alignment > 0.65 ? Math.pow((alignment - 0.65) / 0.35, 2.2) * 0.38 : 0;
+      cinematicPass.uniforms.sunFlare.value = THREE.MathUtils.lerp(cinematicPass.uniforms.sunFlare.value, flareTarget, 0.08);
+      _sunScreenPos.copy(camera.position).addScaledVector(_sunDir, 220).project(camera);
+      cinematicPass.uniforms.sunScreenXY.value.set(_sunScreenPos.x * 0.5 + 0.5, _sunScreenPos.y * 0.5 + 0.5);
+      const rayTarget = alignment > 0.25 ? Math.pow((alignment - 0.25) / 0.75, 1.45) * 0.24 : 0;
+      cinematicPass.uniforms.godRayStrength.value = THREE.MathUtils.lerp(cinematicPass.uniforms.godRayStrength.value, rayTarget, 0.08);
+    } else {
+      cinematicPass.uniforms.sunFlare.value = THREE.MathUtils.lerp(cinematicPass.uniforms.sunFlare.value, 0, 0.1);
+      cinematicPass.uniforms.godRayStrength.value = THREE.MathUtils.lerp(cinematicPass.uniforms.godRayStrength.value, 0, 0.1);
+    }
+  }
+
+  // Cập nhật đếm ngược Hiệu ứng Thức ăn & Tăng cường RPG
+  if (playerBuffs.size > 0) {
+    let buffExpired = false;
+    playerBuffs.forEach((buff, id) => {
+      buff.timeLeft -= delta;
+      if (buff.timeLeft <= 0) {
+        playerBuffs.delete(id);
+        buffExpired = true;
+        showToast(`⏳ Hiệu ứng "${buff.name}" đã kết thúc.`);
+      }
+    });
+    updateBuffsHUD();
+  }
+
+  // Cập nhật Khói Lốp Drift Xe Máy
+  driftSmokePool.forEach((p) => {
+    if (p.life > 0) {
+      p.life -= delta;
+      p.mesh.position.y += delta * 0.35;
+      p.mesh.scale.addScalar(delta * 1.6);
+      p.mesh.material.opacity = Math.max(0, (p.life / 0.48) * 0.35);
+      if (p.life <= 0) p.mesh.visible = false;
+    }
+  });
+
+  // Cập nhật Sóng Radar Trực Giác Phú Thượng (Sonar Scan)
+  if (sonarTimer > 0) {
+    sonarTimer -= delta;
+    const progress = 1.0 - (sonarTimer / 1.4);
+    const radius = THREE.MathUtils.lerp(1, 55, progress);
+    sonarMesh.scale.set(radius, radius, 1);
+    sonarMesh.material.opacity = Math.max(0, (sonarTimer / 1.4) * 0.85);
+    if (sonarTimer <= 0) sonarMesh.visible = false;
+  }
+
+  // Cập nhật Popup kỹ năng pha hành động (Action stunt popup)
+  if (actionPopupTimer > 0) {
+    actionPopupTimer -= delta;
+    if (actionPopupTimer <= 0) {
+      document.getElementById('stunt-action-popup')?.classList.remove('show');
+    }
+  }
+
+  // Hiệu ứng Speed Lines & Rung Lắc Camera khi phóng tốc độ cao hoặc dùng Nitro
+  const speedOverlay = document.getElementById('speed-lines-overlay');
+  const isHighSpeed = playerState.isRidingBike && (Math.abs(rideMotion.speed) > 16.5 || isNitroBoosting);
+  if (speedOverlay) {
+    speedOverlay.classList.toggle('active', isHighSpeed);
+  }
+  if (isHighSpeed) {
+    const shakeAmt = isNitroBoosting ? 0.022 : 0.011;
+    camera.position.x += (Math.random() - 0.5) * shakeAmt;
+    camera.position.y += (Math.random() - 0.5) * shakeAmt;
+  }
+
   minimapAccumulator += delta;
   if (minimapAccumulator >= 0.2 && !horrorModeActive) {
     minimapAccumulator = 0;
@@ -14803,12 +16845,23 @@ daylifeController = createDaylife({
   pause:(value)=>{isDialogueOpen=value;keys.w=keys.a=keys.s=keys.d=keys.shift=keys.q=false;footVelX=footVelZ=0;if(value)rideMotion.speed=0;},
   reward:(r,kind)=>{addRewards(r.coins,r.xp);awardSocialProgress({neighborhood:kind==='cleanup'?{beauty:5,cohesion:2}:kind==='album'?{heritage:5,cohesion:2}:{livelihood:5,cohesion:2}});playSoundEffect('quest');}
 });
-arcadeController = createNeighborhoodArcade({
+arcadeController = createTeaChessStall({
   world:worldGroup,player:playerState,materials:visualMaterials,label:createNPCLabel,box:addBoxCollider,circle:addCircleCollider,
   toast:showToast,
   save:saveGame,canOpen:()=>!isDialogueOpen&&!horrorModeActive,
   context:()=>({x:playerGroup.position.x,z:playerGroup.position.z,night:horrorModeActive,riding:playerState.isRidingBike}),
-  guide:(target)=>{if(isDialogueOpen)return;customGpsTarget=target;showToast('♠ Tiệm Giải Trí 41 ở dãy nhà phía Nam, đối diện Ngõ 41. Tới cửa, xuống xe và bấm E.');},
+  guide:(target)=>{
+    if(isDialogueOpen||horrorModeActive)return;
+    const d=Math.hypot(playerGroup.position.x-target.x,playerGroup.position.z-target.z);
+    if(d<4.6){
+      if(playerState.isRidingBike)togglePlayerMotorbike();
+      arcadeController?.openDirect?.();
+      return;
+    }
+    guideToInventoryTarget(target);
+    showToast('♟ Đã bật dẫn đường GPS theo lộ trình tới Sạp Cờ Tướng & Trà Đá Vỉa Hè Số 41! Tới sạp bấm [E] để chơi.');
+  },
+  reward:xp=>{addRewards(0,xp);awardSocialProgress({neighborhood:{cohesion:1}});},
   pause:(value)=>{isDialogueOpen=value;keys.w=keys.a=keys.s=keys.d=keys.shift=keys.q=false;footVelX=footVelZ=0;if(value)rideMotion.speed=0;}
 });
 policeController=createPoliceWorld({
@@ -14846,9 +16899,15 @@ districtGuideButton.onclick=()=>{if(isDialogueOpen||horrorModeActive)return;dayl
 document.body.append(districtGuideButton);
 {
  const stripes=PEDESTRIAN_CROSSINGS.flatMap(c=>{const count=Math.ceil(c.length/.95);return Array.from({length:count},(_,i)=>({c,offset:(i-(count-1)/2)*c.length/count}));});
- const paint=new THREE.MeshBasicMaterial({color:0xf1f5f9,polygonOffset:true,polygonOffsetFactor:-2}),mesh=new THREE.InstancedMesh(new THREE.PlaneGeometry(1,1).rotateX(-Math.PI/2),paint,stripes.length),dummy=new THREE.Object3D();
+ const paint=visualMaterials.asphalt().clone();
+ paint.color.setHex(0xdedcd0);
+ paint.roughness=.82;
+ paint.metalness=0;
+ paint.polygonOffset=true;
+ paint.polygonOffsetFactor=-2;
+ const mesh=new THREE.InstancedMesh(new THREE.PlaneGeometry(1,1).rotateX(-Math.PI/2),paint,stripes.length),dummy=new THREE.Object3D();
  stripes.forEach(({c,offset},i)=>{const x=c.x+c.nx*offset,z=c.z+c.nz*offset;dummy.position.set(x,getGroundElevationAt(x,z)+.025,z);dummy.rotation.y=-Math.atan2(c.tz,c.tx);dummy.scale.set(c.width,1,.5);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);});
- mesh.name='Pedestrian crossing paint';worldGroup.add(mesh);
+ mesh.name='Pedestrian crossing paint';mesh.receiveShadow=true;worldGroup.add(mesh);
 }
 cityUtilities=buildCityUtilities({world:worldGroup,ground:getGroundElevationAt,pole:(x,z,r)=>addCircleCollider(x,z,r),blocked:(x,z)=>boxColliders.some(b=>x>b.minX-.3&&x<b.maxX+.3&&z>b.minZ-.3&&z<b.maxZ+.3)});
 const wetRoadMaterials=new Set(asphaltMaterialList);
@@ -14858,6 +16917,7 @@ const weatherSelect=document.getElementById('setting-weather');if(weatherSelect)
 const cityTimeInput=document.getElementById('setting-citytime');if(cityTimeInput){cityTimeInput.value=String(playerState.time);cityTimeInput.oninput=()=>{if(horrorModeActive)return;playerState.time=Number(cityTimeInput.value);applyTimeOfDay(playerState.time);markProgressDirty();document.getElementById('val-citytime').textContent=gameClockLabel(playerState.time);};}
 const modelReplacement = replaceBuildingEnvelopes(worldGroup);
 worldGroup.userData.modelReplacement = modelReplacement;
+worldGroup.userData.environmentSurfaces=applyEnvironmentSurfaces(worldGroup);
 const staticCompilation=compileStaticGroups(worldGroup);
 const architectureCompilation=compileArchitectureChunks(worldGroup);
 if(browserPlaytest&&new URLSearchParams(location.search).get('policeDriveTest')==='1')streetEventSpawnTimer=99999;

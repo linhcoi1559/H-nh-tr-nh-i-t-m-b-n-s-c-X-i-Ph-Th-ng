@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {clone} from 'three/addons/utils/SkeletonUtils.js';
 import {canonicalBoneName} from './neighborhood-models.mjs';
+import {smoothOrganicCharacterGeometry,installHumanOrganicShader} from './citizen-details.mjs';
 
 // NPC parts come exclusively from the five CC0 NPC assets. The hero's head,
 // hair and clothing are reserved for the player; only compatible clips are shared.
@@ -48,7 +49,11 @@ const extraRiders=['an','binh','chi','duc','giang','ha'];
 extraRiders.forEach((name,i)=>person('rider-'+name,['An','Bình','Chi','Đức','Giang','Hà'][i]+' · người đi xe',i%2?R:O,[G,E,O,R,V,G][i],[G,O,R,V,E,O][i],i%2?R:G,i%2?O:E,1.61+i*.025,0xc99b78+i*0x010101,[0x6e7989,0x867253,0x72745a,0x925f63,0x5d7a7a,0x86718a][i],0x364451+i*0x020101,0x39302a,{glasses:i%3===0}));
 person('police-hai','Anh Hải · công an tuần tra',G,O,G,G,G,1.78,0xc49673,0x4f6945,0x344735,0x242b24,{hat:G});
 person('police-van','Chị Vân · cảnh sát giao thông',O,R,O,G,G,1.69,0xd0a385,0xc5b581,0xa99c71,0x2f3029,{hat:G});
+person('chess-lam','Ông Lâm · bạn cờ',G,E,E,O,O,1.65,0xc19a7e,0x9c8b6b,0x484c48,0xb0aea4,{glasses:true});
+person('chess-dung','Ông Dũng · bạn cờ',G,E,null,G,E,1.68,0xb88b6d,0x65755a,0x404b3e,0xa6a79c,{headwear:'beret'});
+person('chess-son','Ông Sơn · bạn cờ',O,E,O,O,O,1.63,0xc8a58b,0x8b827c,0x414a53,0xbab6ad,{glasses:true});
 export const POLICE_IDENTITIES=Object.freeze(['police-hai','police-van']);
+export const TEA_CHESS_IDENTITIES=Object.freeze(['chess-lam','chess-dung','chess-son']);
 export const CITIZEN_ROSTER=Object.freeze(profiles);
 export const QUEST_IDENTITIES=Object.freeze(['guard-hung','official-thao','tea-hoa','leader-lam','veteran-dung']);
 export const AMBIENT_IDENTITIES=Object.freeze(['xoi-hanh','worker-phuc','student-mai','student-minh','student-linh','runner-khoa','market-lan','market-ngoc','tea-tuan','tea-quang','student-bao','tailor-lien','books-son','water-binh']);
@@ -95,6 +100,7 @@ export function createCitizenFactory(sources){
     const scaled=v.clone().sub(head).multiply(new THREE.Vector3(...p.head)).add(head);v.lerp(scaled,hw);v.x*=1+(p.width-1)*(1-hw);positions.setXYZ(i,v.x,v.y,v.z);
     if(normals){v.fromBufferAttribute(normals,i);const n=v.clone().divide(new THREE.Vector3(...p.head)).normalize();v.lerp(n,hw);v.x/=1+(p.width-1)*(1-hw);v.normalize();normals.setXYZ(i,v.x,v.y,v.z);}
    }
+   smoothOrganicCharacterGeometry(geometry,(eye||mouth||name==='face_metal')?0.0004:0.0022);
    geometry.computeBoundingBox();geometry.computeBoundingSphere();
    const material=src.material.clone();
    const tint=name==='skin'?p.skin:name==='hair'||name==='hair_accent'?p.hairColor:name.startsWith('top_')?p.shirt:name.startsWith('bottom_')||name==='body_secondary'?p.trousers:name.startsWith('shoes_')?0x454741:name.startsWith('hat_')?(p.id==='guard-hung'?0x40556c:p.id==='veteran-dung'?0x59634b:0x68765c):name==='eyes'?0x332d27:name==='fix_white'?0xe6dfd1:name==='face_metal'?0x675f4e:null;
@@ -119,15 +125,15 @@ export function createCitizenFactory(sources){
  return function create(id){const profile=citizenIdentity(id);if(!templates.has(id))templates.set(id,build(profile));return {model:clone(templates.get(id)),profile,animations:[...sources[profile.body].animations,...(sources.player?.animations||[]).filter(c=>['run','jump'].includes(c.name.toLowerCase()))]};};
 }
 
-const packShape=new THREE.CapsuleGeometry(.105,.17,3,10),strapGeo=new THREE.CylinderGeometry(.008,.008,.3,5),accessoryMaterials=new Map();
-function accessoryMaterial(color){if(!accessoryMaterials.has(color))accessoryMaterials.set(color,new THREE.MeshStandardMaterial({color,roughness:.88}));return accessoryMaterials.get(color);}
+const packShape=new THREE.CapsuleGeometry(.105,.17,8,16),strapGeo=new THREE.CylinderGeometry(.008,.008,.3,10),accessoryMaterials=new Map();
+function accessoryMaterial(color,kind='cloth'){if(!accessoryMaterials.has(color)){const m=new THREE.MeshStandardMaterial({color,roughness:kind==='skin'?.56:.76});installHumanOrganicShader(m,kind);accessoryMaterials.set(color,m);}return accessoryMaterials.get(color);}
 export function addCitizenIdentityDetails(model,bones,p){
  const head=bones.head,chest=bones.chest||bones.spine;
  model.updateMatrixWorld(true);
  function attach(bone,group){const scale=bone.getWorldScale(new THREE.Vector3());group.scale.set(1/Math.abs(scale.x),1/Math.abs(scale.y),1/Math.abs(scale.z));bone.add(group);}
  if(bones.neck&&head){
   const length=head.getWorldPosition(new THREE.Vector3()).distanceTo(bones.neck.getWorldPosition(new THREE.Vector3()));
-  const collar=new THREE.Group();collar.name='FittedNeck';const neck=new THREE.Mesh(new THREE.CylinderGeometry(.046,.055,length+.04,10),accessoryMaterial(p.skin));neck.position.y=length/2;collar.add(neck);attach(bones.neck,collar);
+  const collar=new THREE.Group();collar.name='FittedNeck';const neck=new THREE.Mesh(new THREE.CylinderGeometry(.046,.055,length+.04,16),accessoryMaterial(p.skin,'skin'));neck.position.y=length/2;collar.add(neck);attach(bones.neck,collar);
  }
  if(p.bag==='backpack'&&chest){
   const bag=new THREE.Group();bag.name='SchoolBackpack';const body=new THREE.Mesh(packShape,accessoryMaterial(p.bagColor));body.position.set(0,-.07,-.19);body.scale.set(1.15,1,.55);body.castShadow=true;bag.add(body);
@@ -139,7 +145,7 @@ export function addCitizenIdentityDetails(model,bones,p){
    for(let i=0;i<position.count;i++){let weight=0;for(let k=0;k<4;k++)if(mesh.skeleton.bones[skinIndex.getComponent(i,k)]===head)weight+=skinWeight.getComponent(i,k);if(weight<.5)continue;point.fromBufferAttribute(position,i);mesh.applyBoneTransform(i,point);top=Math.max(top,point.applyMatrix4(mesh.matrixWorld).y);}
   });const rise=Number.isFinite(top)?top-head.getWorldPosition(point).y:.3;
   const hat=new THREE.Group();hat.name=p.headwear==='conical'?'WovenConicalHat':'SoftBeret';
-  const geo=p.headwear==='conical'?new THREE.ConeGeometry(.29,.19,28,1,true):new THREE.SphereGeometry(.19,18,8,0,Math.PI*2,0,Math.PI*.65);
+  const geo=p.headwear==='conical'?new THREE.ConeGeometry(.29,.19,36,3,true):new THREE.SphereGeometry(.19,24,14,0,Math.PI*2,0,Math.PI*.65);
   const mesh=new THREE.Mesh(geo,accessoryMaterial(p.headwear==='conical'?0xbca97a:0x68685c));mesh.castShadow=true;
   mesh.position.y=rise+(p.headwear==='conical'?.025:-.025);if(p.headwear==='beret'){mesh.scale.set(1,.35,1.05);mesh.rotation.z=.15;}hat.add(mesh);attach(head,hat);
  }

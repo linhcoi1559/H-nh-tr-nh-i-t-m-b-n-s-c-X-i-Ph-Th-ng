@@ -1,0 +1,36 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Kiểm thử sạp cờ tướng và trà đá</title>
+<style>body{margin:0;background:#17291f;color:#eee8d3;font:14px system-ui}header{display:flex;gap:10px;padding:8px;flex-wrap:wrap}button{padding:8px}iframe{width:1200px;height:780px;border:0}#result{white-space:pre-line;padding:8px}body.preview #result{display:none}body.preview header{padding:3px}</style>
+<header><button id="load">Mở sạp cờ</button><button id="test" disabled>Chơi cờ, uống trà và lưu ván</button><button id="restore" disabled>Khôi phục save</button><span id="status">Phiên kiểm thử riêng 127.0.0.1</span></header><div id="result"></div><iframe title="Sạp cờ tướng"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot,parseSnapshot} from '../gameplay-state.mjs';
+import {legalMoves} from '../xiangqi.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),result=document.querySelector('#result'),keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'];let backup;
+const preview=document.createElement('button');preview.textContent='Xem bàn cờ';preview.onclick=()=>document.body.classList.toggle('preview');document.querySelector('header').append(preview);
+const doc=()=>frame.contentDocument,saved=()=>parseSnapshot(localStorage.getItem(SAVE_KEY)),wait=ms=>new Promise(r=>setTimeout(r,ms));
+async function until(fn){const deadline=performance.now()+30000;while(!fn()){if(performance.now()>deadline)throw Error('Hết thời gian chờ');await wait(70);}}
+function key(code,down=true){frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(down?'keydown':'keyup',{code,bubbles:true}));}
+function tap(code){key(code);key(code,false);}
+function click(text){const b=[...doc().querySelectorAll('#tea-chess-modal button')].find(b=>b.textContent===text&&!b.disabled);if(!b)throw Error('Không tìm thấy nút hoạt động: '+text);b.click();}
+function assert(value,message){if(!value)throw Error(message);result.textContent+='PASS · '+message+'\n';}
+document.querySelector('#load').onclick=async()=>{try{
+ if(!backup)backup=keys.map(k=>[k,localStorage.getItem(k)]);document.querySelector('#restore').disabled=false;
+ localStorage.setItem(SAVE_KEY,encodeSnapshot({coins:55555,day:1,stamina:60,playerPosition:{x:-40.6,z:11.7},camYaw:0}));localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',autoTurnHead:false,brightness:1,showWaypoints:false}));
+ frame.src='../index.html?playtest=1&policeDriveTest=1';await until(()=>doc()?.querySelector('#interact-prompt')?.dataset.charactersReady);status.textContent='Sẵn sàng · trước sạp cờ';document.querySelector('#test').disabled=false;
+ }catch(e){status.textContent='FAIL '+e.message;}};
+document.querySelector('#test').onclick=async()=>{document.querySelector('#test').disabled=true;try{
+ key('KeyW');await until(()=>Number(doc().querySelector('#interact-prompt').dataset.playerPosition.split(',')[1])>13.1);key('KeyW',false);await wait(250);tap('KeyE');
+ assert(!doc().querySelector('#tea-chess-modal').hidden,'Đi bộ vào sạp và bấm E mở bàn cờ');assert(!doc().querySelector('#arcade-modal'),'Không còn giao diện sòng bạc');
+ click('Mời ông đánh cờ');assert(doc().querySelectorAll('.xiangqi-point.piece').length===32,'Bàn cờ có 32 quân');
+ for(let round=0;round<4;round++){const g=saved().teaChess.active,m=legalMoves(g.board,'red')[0];doc().querySelector(`[data-square="${m.from}"]`).click();assert(doc().querySelector(`[data-square="${m.to}"]`).classList.contains('legal'),'Gợi sáng điểm đến hợp lệ');doc().querySelector(`[data-square="${m.to}"]`).click();await until(()=>saved().teaChess.active.turn==='red');}
+ assert(saved().teaChess.active.ply===8,'Máy đã đáp đủ bốn lượt bằng Worker');
+ click('Xin gợi ý');await until(()=>doc().querySelectorAll('.xiangqi-point.hint').length===2);assert(true,'Máy chỉ đúng hai ô cho gợi ý');
+ click('Uống trà đá · mời khách');assert(saved().teaChess.teaDay===1,'Uống trà được lưu, không trừ tiền');assert(saved().coins===55555,'Đánh cờ và trà không có tiền cược');
+ const before=saved().teaChess.active.board.join('.');click('✕');tap('KeyE');assert(saved().teaChess.active.board.join('.')===before,'Rời sạp rồi quay lại giữ nguyên ván');
+ click('Xin đi lại');assert(saved().teaChess.active.ply===6,'Xin đi lại khôi phục đủ một lượt của hai bên');
+ const restored=saved().teaChess.active,move=legalMoves(restored.board,'red')[0];doc().querySelector(`[data-square="${move.from}"]`).click();doc().querySelector(`[data-square="${move.to}"]`).click();await until(()=>saved().teaChess.active.turn==='red');
+ click('Xin thua');assert(saved().teaChess.games===1,'Kết thúc ván và lưu tiến triển bạn cờ');
+ assert([...doc().querySelectorAll('.tea-elder button')].filter(b=>b.textContent==='Mời ông đánh cờ'&&!b.disabled).length===2,'Mở được ông Dũng sau ván đầu');
+ status.textContent='PASS · sạp cờ, AI, trà, lưu ván, đi lại và mở bạn cờ';
+ }catch(e){status.textContent='FAIL '+e.message;result.textContent+='FAIL '+e.message;}finally{key('KeyW',false);document.querySelector('#test').disabled=false;}};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(300);for(const [key,value]of backup||[])value===null?localStorage.removeItem(key):localStorage.setItem(key,value);status.textContent='Đã khôi phục save';};
+</script></html>

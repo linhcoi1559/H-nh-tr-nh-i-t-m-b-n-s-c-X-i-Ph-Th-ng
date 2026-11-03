@@ -3,9 +3,12 @@ import {dayOffers,normalizeDaylife,acceptDayJob,availableGoals,completeDayGoal,f
 import {STORY_TITLE,neighborhoodChapter,chooseNeighborhoodEnding} from './neighborhood-story.mjs';
 import {createPhotoMystery} from './photo-mystery.mjs';
 import {createEastExploration} from './east-exploration.mjs';
+import {buildActivityCorners,NEIGHBORHOOD_JOBS} from './neighborhood-activities.mjs';
+import {openLeisureGame} from './street-leisure.mjs';
 
 export function createDaylife(api) {
   const root=new THREE.Group(); root.name='NeighborhoodDayLife'; api.world.add(root);
+  const activityCorners=buildActivityCorners(root,api.collider);
   const markerRoot=new THREE.Group(),projectRoot=new THREE.Group(); root.add(markerRoot,projectRoot);
   const registered=new Set(); let markerKey='',markers=[],mini=null,modalOpen=false,uiClock=0,lastTracker='',galleryKey='';
   const photoTextures=new Map();let mystery=null,east=null;
@@ -27,9 +30,9 @@ export function createDaylife(api) {
   function open() {
     if (!modalOpen && !api.canOpen()) return false;
     if (!modalOpen) {modalOpen=true;api.pause(true);document.exitPointerLock?.();overlay.hidden=false;}
-    content.replaceChildren();mini=null;return true;
+    mini?.dispose?.();content.replaceChildren();mini=null;return true;
   }
-  function close() {if(!modalOpen)return;modalOpen=false;mini=null;overlay.hidden=true;api.pause(false);button.focus();}
+  function close() {if(!modalOpen)return;modalOpen=false;mini?.dispose?.();mini=null;overlay.hidden=true;api.pause(false);button.focus();}
   overlay.querySelector('#daylife-close').onclick=close;
   function board() {
     if(!open())return;
@@ -53,10 +56,13 @@ export function createDaylife(api) {
       action('Tiếp tục công việc',close);
       action('Trả lại việc · không nhận thưởng',()=>{commit({...state(),active:null});board();});
     } else {
-      for(const o of dayOffers(api.player.day)) {
+      const offers=dayOffers(api.player.day);
+      const isLeisure=o=>o.goals.some(g=>g.action==='leisure')||o.id==='lost-property';
+      text('Sinh hoạt mới: pha trà, cắm hoa, bơm xe, câu cá và đồ thất lạc. Nhận việc ở đây hoặc ghé điểm đầu và bấm E.');
+      for(const o of [...offers.filter(isLeisure),...offers.filter(o=>!isLeisure(o))]) {
         const card=document.createElement('article');card.className='daylife-job';content.append(card);
         text(`${o.icon} ${o.title}`,'h3',card);text(o.story,'p',card);
-        if(chapter.stage!=='finished'&&chapter.stage!=='decision')text(state().story.helped.includes(o.id)?'Đã giúp nhóm này · vẫn nhận thù lao bình thường':'Một nhóm chưa được giúp · tiến triển câu chuyện','small',card);
+        if(chapter.stage!=='finished'&&chapter.stage!=='decision')text(['delivery','cleanup','album','courier'].includes(o.id)?(state().story.helped.includes(o.id)?'Đã giúp nhóm này · vẫn nhận thù lao bình thường':'Một nhóm chưa được giúp · tiến triển câu chuyện'):'Việc sinh hoạt thêm · nhận thù lao và điểm đóng góp','small',card);
         text(`Thù lao gốc ${o.base.toLocaleString('vi-VN')}đ · +75–125 XP · 1–2 điểm đóng góp`,'small',card);
         const b=action(state().completed.includes(o.id)?'Đã làm hôm nay':'Nhận việc',()=>{commit(acceptDayJob(state(),o.id,api.player.day));close();api.toast(`Đã nhận: ${o.title}. Mở N để xem tiến độ; làm từng bước ngoài phố.`);},card);
         b.disabled=state().completed.includes(o.id)||mystery.active();
@@ -82,7 +88,7 @@ export function createDaylife(api) {
     if(!open())return;
     title.textContent='Xong việc rồi · chọn phần thưởng';
     const o=offer();if(!o){board();return;}
-    text(o.kind==='delivery'?(state().active.remaining>0?'Hai phần xôi đã tới nơi còn nóng.':'Đơn giao đã xong nhưng xôi nguội: vẫn có thù lao, mất thưởng đúng hẹn.'):o.kind==='courier'?'Ba hộ đã ký nhận đủ. Sổ giao trở về, tiền công phụ thuộc vào độ nguyên vẹn của hàng.':o.kind==='cleanup'?'Lối đi đã sạch. Cô Hoa nhận phần rác bạn phân loại để chuyển đi.':'Bộ ảnh đã đủ cho buổi gặp mặt cư dân.');
+    text(o.kind==='care'?`Đã hoàn thành: ${o.title}. Các bước đã được ghi nhận, bạn có thể nhận thù lao hoặc góp vào quỹ phố.`:o.kind==='delivery'?(state().active.remaining>0?'Hai phần xôi đã tới nơi còn nóng.':'Đơn giao đã xong nhưng xôi nguội: vẫn có thù lao, mất thưởng đúng hẹn.'):o.kind==='courier'?'Ba hộ đã ký nhận đủ. Sổ giao trở về, tiền công phụ thuộc vào độ nguyên vẹn của hàng.':o.kind==='cleanup'?'Lối đi đã sạch. Cô Hoa nhận phần rác bạn phân loại để chuyển đi.':'Bộ ảnh đã đủ cho buổi gặp mặt cư dân.');
     text(`Chất lượng ${Math.round(state().active.quality)}% · lựa chọn này sẽ được cộng vào điểm xây dựng khu phố.`);
     for(const [choice,label] of [['income','Giữ đủ thù lao'],['fund','Góp nửa thù lao vào quỹ khu phố']]) {
       const r=jobReward(state(),api.player.day,choice);
@@ -157,16 +163,26 @@ export function createDaylife(api) {
     const c=context();if(c.night||c.riding)return null;
     return availableGoals(state(),api.player.day).map(g=>({...g,d:Math.hypot(c.x-g.x,c.z-g.z)})).sort((a,b)=>a.d-b.d)[0];
   }
+  function localJobs(){const c=context();if(c.night||c.riding||state().active||mystery.active())return [];return NEIGHBORHOOD_JOBS.filter(o=>!state().completed.includes(o.id)&&Math.hypot(c.x-o.goals[0].x,c.z-o.goals[0].z)<3.1);}
   function prompt() {
     if(east.prompt())return east.prompt();
     if(mystery.prompt())return mystery.prompt();
-    const g=nearest();return g&&g.d<3.1?(g.action==='photo'?'P · Hướng máy vào cảnh rồi chụp ảnh':g.title):'';
+    const g=nearest();return g&&g.d<3.1?(g.action==='photo'?'P · Hướng máy vào cảnh rồi chụp ảnh':g.title):localJobs().length?'Hỏi việc tại góc sinh hoạt (E)':'';
   }
   function interact() {
     if(east.interact())return true;
     if(mystery.interact())return true;
-    const g=nearest();if(!g||g.d>=3.1)return false;
-    if(g.action==='pickup')pickup(g);
+    const g=nearest();if(!g||g.d>=3.1){const jobs=localJobs();if(!jobs.length||!open())return false;title.textContent='Ghé quầy · có việc nhờ bạn';for(const o of jobs){text(o.title,'h3');text(o.story);action('Nhận: '+o.title,()=>{commit(acceptDayJob(state(),o.id,api.player.day));close();api.toast('Đã nhận việc. Bấm E tại đây để bắt đầu; N xem tiến độ.');});}return true;}
+    if(g.action==='leisure'){
+      if(!open())return true;title.textContent=g.title;
+      mini={kind:'leisure',dispose:openLeisureGame({goal:g,day:api.player.day,content,text,action,completed})};
+    }
+    else if(g.action==='care'){
+      if(!open())return true;title.textContent=g.title;text(g.condition);
+      const feedback=text('Đọc tình huống rồi chọn cách xử lý.');
+      g.options.forEach((option,i)=>action(option,()=>{if(i===g.answer){completed(g.id);api.toast('✓ Đã hoàn thành: '+g.title);}else{feedback.textContent='Cách này chưa phù hợp. Đọc lại tình huống rồi thử lại.';}}));
+    }
+    else if(g.action==='pickup')pickup(g);
     else if(g.action==='receipt')receipt(g);
     else if(g.action==='return')completed(g.id);
     else if(g.action==='pack')pack(g);
@@ -252,6 +268,7 @@ export function createDaylife(api) {
     label.scale.set(1.4,.38,1);label.position.y=.65;plaque.add(label);projectRoot.add(plaque);
   }
   function update(dt) {
+    activityCorners.update(state());
     const c=context();root.visible=!c.night;button.hidden=c.night;
     if(c.night){if(modalOpen)close();tracker.hidden=true;return;}
     if(state().day!==api.player.day){commit(normalizeDaylife(state(),api.player.day));}
@@ -267,9 +284,9 @@ export function createDaylife(api) {
     markers.forEach(({g:goal,group})=>{group.visible=targets.some(t=>t.id===goal.id)&&(goal.action!=='photo'||Math.hypot(c.x-goal.x,c.z-goal.z)<12);});
     tracker.hidden=!a&&!mystery.active();document.body.classList.toggle('daylife-active',!!a||mystery.active());
     const quest=document.getElementById('quest-text'),hint=document.getElementById('quest-sub-hint'),fill=document.getElementById('quest-fill');
-    const heading=a?`Đang làm: ${offer().title}`:`Ngày hội khu phố · ${state().completed.length}/${dayOffers(api.player.day).length} việc hôm nay`;
+    const heading=a?`Đang làm: ${offer().title}`:`Việc khu phố: ${state().completed.length}/${dayOffers(api.player.day).length} hoàn thành`;
     const chapter=neighborhoodChapter(state().story);
-    const guidance=a?(g?g.title:'Mở N để chọn phần thưởng'):chapter.stage==='decision'?'Cô Hoa đang đợi ý kiến của bạn. Mở N để chọn Góc xanh hoặc Góc ảnh cho Ngõ 41.':chapter.stage!=='finished'?`Chuyện “${STORY_TITLE}”: đã giúp ${chapter.progress}/3 nhóm cư dân. Mở N đọc lời nhờ và chọn một việc khác nhau.`:state().completed.length===dayOffers(api.player.day).length?'Kết ngày để có tuyến mới; điểm và công trình được giữ lại.':'Nhấn N chọn giao xôi, chuyển bưu kiện Phú Xá, dọn ngõ hoặc làm bộ ảnh. Nhiệm vụ văn hóa cũ vẫn ở Kịch bản (J).';
+    const guidance=a?(g?`${g.title} (${Math.round(g.d)}m)`:'Xong việc · Mở N nhận thưởng'):chapter.stage==='decision'?'Mở N chọn Góc xanh hoặc Góc ảnh cho Ngõ 41':chapter.stage!=='finished'?`Chuyện Góc 41 (${chapter.progress}/3) · Nhấn N nhận việc hoặc G mở Hoạt động`:'Nhấn N chọn việc mới · Phím G chơi mini-game & độ xe';
     if(quest&&quest.textContent!==heading)quest.textContent=heading;
     if(hint&&hint.textContent!==guidance)hint.textContent=guidance;
     if(!a&&mystery.active()){

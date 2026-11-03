@@ -24,10 +24,10 @@ export function buildCityUtilities(api){
  const glowTexture=new THREE.CanvasTexture(glowCanvas),poolMaterial=new THREE.MeshBasicMaterial({map:glowTexture,transparent:true,opacity:0,depthWrite:false,blending:THREE.AdditiveBlending});const pools=new THREE.InstancedMesh(new THREE.PlaneGeometry(1,1).rotateX(-Math.PI/2),poolMaterial,layout.poles.length);
  layout.poles.forEach((p,i)=>set(pools,i,p.lx-p.nx*1.2,.112,p.lz-p.nz*1.2,8,1,8));root.add(pools);
  // A fixed small light pool follows the nearest poles; all distant bulbs still glow.
- const lights=Array.from({length:4},()=>{const light=new THREE.PointLight(0xffd69b,0,18,2);light.castShadow=false;api.world.add(light);return light;});
+ const lights=Array.from({length:6},()=>{const light=new THREE.PointLight(0xffd69b,0,22,1.85);light.castShadow=false;api.world.add(light);return light;});
  let timer=1;
  return {root,counts:{poles:layout.poles.length,cableSpans:layout.links.length,cables:layout.links.length*6,activeLightBudget:lights.length},update(dt,elapsed,context){
-  time.value=elapsed;wind.value=context.wind;const night=context.night?1:nightAmount(context.hour);bulb.emissiveIntensity=.06+night*2.4;poolMaterial.opacity=night*.3;pools.visible=night>.01;
-  timer+=dt;if(timer>.4){timer=0;const nearest=layout.poles.map(p=>({p,d:Math.hypot(p.x-context.x,p.z-context.z)})).sort((a,b)=>a.d-b.d);lights.forEach((light,i)=>{const row=nearest[i];if(!row||row.d>48||night<.01){light.intensity=0;return;}light.position.set(row.p.lx,row.p.y+6.95,row.p.lz);light.intensity=night*(context.performance?55:110);});}
+  time.value=elapsed;wind.value=context.wind;const night=context.night?1:nightAmount(context.hour);bulb.emissiveIntensity=.08+night*2.8;poolMaterial.opacity=night*.42;pools.visible=night>.01;
+  timer+=dt;if(timer>.35){timer=0;const nearest=layout.poles.map(p=>({p,d:Math.hypot(p.x-context.x,p.z-context.z)})).sort((a,b)=>a.d-b.d);lights.forEach((light,i)=>{const row=nearest[i];if(!row||row.d>56||night<.01){light.intensity=0;return;}light.position.set(row.p.lx,row.p.y+6.95,row.p.lz);light.intensity=night*(context.performance?68:135);});}
  }};
 }

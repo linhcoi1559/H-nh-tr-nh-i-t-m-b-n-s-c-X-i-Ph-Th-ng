@@ -1426,6 +1426,13 @@ body.horror-blood-flicker #horror-atmosphere {
 .daylife-zone{position:absolute;left:35%;width:30%;height:100%;background:#42845b}
 .daylife-timing i{position:absolute;top:0;bottom:0;width:5px;background:#ffe3a4;box-shadow:0 0 8px #ffe3a4}
 .daylife-gallery{display:flex;gap:12px;flex-wrap:wrap}.daylife-gallery img{width:192px;max-width:100%;height:108px;object-fit:cover;border:3px solid #8a7757;border-radius:4px}
+.leisure-scene{padding:24px;border:1px solid #748775;border-radius:16px;background:radial-gradient(ellipse at top,#375c50,#142b28);text-align:center;min-height:190px}
+.leisure-icon{font-size:54px;min-height:80px;line-height:1.5;letter-spacing:8px;overflow-wrap:anywhere}
+.leisure-scene.flowers{background:radial-gradient(ellipse at top,#65524d,#2e3430)}
+.leisure-scene.fishing{background:linear-gradient(160deg,#3c6570,#173d46)}
+.leisure-scene.pump{background:linear-gradient(150deg,#4e5b55,#24302e)}
+.leisure-scene .daylife-timing{max-width:480px;margin:18px auto;height:40px}
+.leisure-controls{display:flex;justify-content:center;flex-wrap:wrap;margin-top:14px}
 body.daylife-active #character-status{display:none}
 body.daylife-active #street-story-panel{display:none}
 @media(max-width:680px){#daylife-modal{padding:8px}#daylife-modal section{padding:16px;max-height:88vh}#daylife-tracker{max-width:calc(100vw - 32px);bottom:156px;font-size:11px}#daylife-button{bottom:108px}}
@@ -2153,3 +2160,787 @@ body:not(.horror-mode) #game-hud-top .hud-btn{font-size:12px;line-height:1.45;co
 
 #police-status{position:fixed;z-index:35;left:50%;bottom:142px;transform:translateX(-50%);width:min(470px,calc(100vw - 40px));padding:13px 17px;background:#122e39;border:1px solid #79bfd9;border-left:4px solid #f2cf76;border-radius:12px;color:#f6f8ee;font:600 14px/1.6 system-ui;box-shadow:0 5px 20px #0005;pointer-events:none}
 @media(max-height:720px){#police-status{bottom:90px;font-size:12px;padding:8px 12px;max-width:380px}}
+/* Neighborhood tea and Xiangqi stall */
+#tea-chess-modal[hidden]{display:none!important}
+#tea-chess-modal{position:fixed;inset:0;z-index:2200;display:grid;place-items:center;padding:18px;background:#081212df;backdrop-filter:blur(9px);color:#efe6d2;font:14px/1.5 system-ui,sans-serif}
+#tea-chess-modal *{box-sizing:border-box}
+#tea-chess-modal section{width:min(1040px,100%);max-height:95vh;overflow:auto;border:1px solid #bda779;border-radius:18px;background:linear-gradient(140deg,#23372f,#13251f);box-shadow:0 25px 100px #000b;padding:20px 26px}
+#tea-chess-modal header{display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:1px solid #a1ae9033;padding-bottom:12px}
+#tea-chess-modal header small{font-size:10px;letter-spacing:.19em;color:#c3b588}
+#tea-chess-modal h2{font:600 26px/1.25 Georgia,serif;margin:4px 0;color:#f5e9ca}
+#tea-chess-modal h3{font:600 17px/1.3 Georgia,serif;color:#e9cf97;margin:15px 0 8px}
+#tea-chess-modal p{margin:8px 0}
+#tea-chess-modal button{font:600 13px/1.4 system-ui;padding:9px 13px;color:#f2e7cc;background:#344f42;border:1px solid #82917a;border-radius:8px;cursor:pointer}
+#tea-chess-modal button:hover:not(:disabled){background:#466953;border-color:#dcc187}
+#tea-chess-modal button:disabled{cursor:default;opacity:.5}
+#tea-chess-modal button:focus-visible{outline:3px solid #e9b54b;outline-offset:3px}
+#tea-chess-modal .tea-close{font-size:22px;padding:2px 12px}
+.tea-progress{font-size:12px;color:#c8d5c4;margin:9px 0}
+.tea-challenge{margin:10px 0;padding:9px 12px;border:1px solid #b8914e;border-radius:10px;background:linear-gradient(90deg,#3b4b35,#273c31);color:#ffe8ad;font-size:.9rem;box-shadow:0 3px 10px #0003}
+.tea-elders{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.tea-elder{position:relative;display:grid;grid-template-columns:48px 1fr;align-items:center;gap:2px 9px;border:1px solid #a7b39744;border-radius:12px;padding:10px;background:#192c24}
+.tea-elder.current{border-color:#d9b971;background:#304632}
+.tea-elder strong,.tea-elder small,.tea-elder span{grid-column:2}
+.tea-elder small,.tea-elder span{font-size:11px;color:#c2cbb7}
+.elder-portrait{grid-column:1;grid-row:1/4;display:grid;place-items:center;width:46px;height:52px;font-size:34px;background:linear-gradient(155deg,var(--elder-coat),#28352e);border-radius:40% 40% 10px 10px}
+#tea-chess-modal .tea-elder button{grid-column:1/-1;font-size:11px;padding:5px 7px;margin-top:5px}
+.tea-dialogue{padding:11px 15px;background:#e6d8b9;color:#343b2b;border-left:4px solid #bc9656;border-radius:0 10px 10px 0;margin:12px 0;min-height:48px;font-size:13px}
+.tea-layout{display:grid;grid-template-columns:minmax(260px,1fr) 290px;gap:25px}
+.tea-play{min-width:0}.tea-turn{text-align:center;color:#f0d99d;font-size:13px;margin:0 0 8px!important;min-height:20px}
+.xiangqi-board{position:relative;width:min(100%,450px);aspect-ratio:9/10;margin:0 auto;border:10px solid #6b472d;border-radius:6px;background:repeating-linear-gradient(87deg,#d7b682 0,#e6c998 12px,#dabb86 25px);box-shadow:0 5px 18px #0007,inset 0 0 30px #684c2b55;isolation:isolate}
+.xiangqi-board svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.xiangqi-board svg text{fill:#7c5837;font:28px Georgia,serif;letter-spacing:9px}
+#tea-chess-modal .xiangqi-point{position:absolute;transform:translate(-50%,-50%);width:9.1%;aspect-ratio:1;height:auto;display:grid;place-items:center;padding:0;border-radius:50%;border:2px solid transparent;background:transparent;z-index:1;font:bold clamp(18px,2.6vw,29px)/1 'Noto Serif CJK SC','Microsoft YaHei',serif;touch-action:manipulation}
+#tea-chess-modal .xiangqi-point:disabled{opacity:1}
+#tea-chess-modal .xiangqi-point.piece{background:radial-gradient(circle at 35% 25%,#fff0c8,#dfbd82 70%,#b28a54);border-color:#ad8b54;box-shadow:0 3px 0 #927042,0 4px 7px #0005,inset 0 0 0 3px #e2c493;color:#9f3027;animation:tea-piece-appear .22s ease-out}
+#tea-chess-modal .xiangqi-point.black{color:#233b35}
+#tea-chess-modal .xiangqi-point.empty:hover:not(:disabled){background:#fff4c744}
+#tea-chess-modal .xiangqi-point.legal:after{content:'';position:absolute;width:24%;aspect-ratio:1;background:#236b47;border:2px solid #e6f6d6;border-radius:50%;box-shadow:0 0 0 5px #2b694e33}
+#tea-chess-modal .xiangqi-point.piece.legal{outline:3px dashed #48764d;outline-offset:2px}
+#tea-chess-modal .xiangqi-point.selected{outline:3px solid #f8f4c2;box-shadow:0 0 0 6px #32694c,0 5px 10px #0008}
+#tea-chess-modal .xiangqi-point.last-move:not(.piece){background:#93642933;border:2px solid #805a2b88}
+#tea-chess-modal .xiangqi-point.hint{outline:3px dashed #077b86;outline-offset:2px}
+.tea-controls{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding-top:12px}.tea-check{color:#ffc1a7;font-weight:bold;text-align:center}
+.tea-aside{border-left:1px solid #a8b38d33;padding-left:20px;font-size:13px;color:#cfdbc8}.tea-aside details{margin-top:18px;border:1px solid #a8b38d44;border-radius:9px;padding:10px}.tea-aside summary{cursor:pointer;color:#e9d2a1}.tea-note{font-size:11px;color:#aebda8}
+.tea-log{padding-left:20px;font-size:12px;line-height:1.8;color:#d4ddc7}
+.tea-invitation{text-align:center;padding:55px 30px;color:#d8dfc9;border:1px dashed #9eab8255;border-radius:14px;min-height:320px;background:radial-gradient(#36513c88,transparent)}.tea-invitation>span{font-size:76px;color:#d4b579}
+@keyframes tea-piece-appear{from{filter:brightness(1.2)}to{filter:brightness(1)}}
+@media(max-width:720px){#tea-chess-modal{padding:6px}#tea-chess-modal section{padding:12px;max-height:97vh}#tea-chess-modal h2{font-size:21px}.tea-elders{gap:5px}.tea-elder{padding:7px;display:flex;flex-direction:column;text-align:center}.tea-elder small{min-height:30px}.elder-portrait{width:38px;height:42px;font-size:28px}.tea-layout{grid-template-columns:1fr;gap:10px}.tea-aside{border-left:0;border-top:1px solid #a8b38d44;padding:8px 0}.xiangqi-board{width:min(100%,430px)}#tea-chess-modal .xiangqi-point{font-size:clamp(20px,6vw,29px)}.tea-dialogue{font-size:12px}}
+@media(prefers-reduced-motion:reduce){#tea-chess-modal *{animation:none!important}}
+@media(min-width:721px){.tea-elders.playing .elder-portrait,.tea-elders.playing .tea-elder span{display:none}.tea-elders.playing .tea-elder{display:block;padding:6px 10px}.tea-elders.playing .tea-elder strong{display:inline-block;margin-right:8px}.tea-elders.playing .tea-elder small{display:inline-block}.tea-elders.playing .tea-elder button{display:block;width:100%;margin:3px 0 0;padding:3px 6px!important}.xiangqi-board{width:min(100%,450px,calc((100vh - 390px)*.9))}.tea-elders.playing~.tea-dialogue{margin:8px 0;padding:8px 12px;min-height:39px}}
+
+/* ==========================================================================
+   AAA GAMEPLAY OVERHAUL: BUFFS BAR, SPEED LINES & ACTION STUNT SYSTEM
+   ========================================================================== */
+.active-buffs-bar {
+  position: fixed;
+  top: 98px;
+  left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 18;
+  pointer-events: none;
+}
+.buff-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1.5px solid var(--buff-color, #f59e0b);
+  border-radius: 20px;
+  padding: 4px 12px 4px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45), 0 0 10px var(--buff-glow, rgba(245, 158, 11, 0.35));
+  animation: buff-pulse 2s infinite ease-in-out;
+  backdrop-filter: blur(6px);
+}
+.buff-icon {
+  font-size: 14px;
+}
+.buff-timer {
+  background: rgba(255, 255, 255, 0.18);
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+@keyframes buff-pulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.02); filter: brightness(1.15); }
+}
+
+.speed-lines-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+  opacity: 0;
+  transition: opacity 0.25s ease-out;
+  background: radial-gradient(circle at center, transparent 40%, rgba(255, 255, 255, 0.15) 75%, rgba(56, 189, 248, 0.25) 100%);
+  mix-blend-mode: screen;
+}
+.speed-lines-overlay.active {
+  opacity: 1;
+}
+
+.stunt-action-popup {
+  position: fixed;
+  top: 36%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.85);
+  z-index: 25;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(239, 68, 68, 0.95));
+  color: #fff;
+  font-size: 14px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 8px 18px;
+  border-radius: 24px;
+  box-shadow: 0 8px 30px rgba(245, 158, 11, 0.65), 0 0 0 2px rgba(255, 255, 255, 0.6);
+  opacity: 0;
+  transition: transform 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28), opacity 0.2s ease-out;
+}
+.stunt-action-popup.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1.05);
+}
+
+.sonar-hud-radar {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 14;
+  opacity: 0;
+  box-shadow: inset 0 0 80px rgba(245, 158, 11, 0.45);
+  transition: opacity 0.3s ease-out;
+}
+.sonar-hud-radar.active {
+  opacity: 1;
+}
+
+/* ==========================================================================
+   CLEAN AAA HUD & SIDEWALK CHESS OVERHAUL (DECLUTTERED SCREEN)
+   ========================================================================== */
+body:not(.horror-mode) #game-hud-top {
+  gap: 10px;
+  padding: 8px 14px;
+  align-items: flex-start;
+}
+body:not(.horror-mode) #game-hud-top .player-card {
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: rgba(15, 29, 34, 0.86);
+  backdrop-filter: blur(10px);
+  max-width: 280px;
+}
+body:not(.horror-mode) #game-hud-top .player-eyebrow,
+body:not(.horror-mode) #game-hud-top .location-sub {
+  display: none;
+}
+body:not(.horror-mode) #game-hud-top .player-title {
+  font-size: 14px;
+  line-height: 1.25;
+  margin-bottom: 4px;
+}
+body:not(.horror-mode) #game-hud-top .stat-pill {
+  font-size: 11.5px;
+  padding: 2px 7px;
+}
+#day-time-pill {
+  font-size: 12px !important;
+  padding: 2px 7px !important;
+}
+body:not(.horror-mode) #game-hud-top .quest-banner {
+  padding: 8px 14px;
+  border-radius: 14px;
+  background: rgba(15, 29, 34, 0.84);
+  backdrop-filter: blur(10px);
+  max-height: none !important;
+  overflow: hidden !important;
+  min-width: 240px;
+  max-width: 390px;
+}
+body:not(.horror-mode) #quest-text {
+  font-size: 13px;
+  line-height: 1.3;
+}
+body:not(.horror-mode) #game-hud-top .quest-sub-hint {
+  font-size: 11.5px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+#street-story-panel {
+  display: none !important;
+}
+body:not(.horror-mode) #game-hud-top .hud-actions {
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: rgba(15, 29, 34, 0.84);
+  backdrop-filter: blur(10px);
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+body:not(.horror-mode) #game-hud-top .hud-btn {
+  font-size: 11.5px;
+  padding: 5px 9px;
+  border-radius: 9px;
+  min-height: 30px;
+}
+body:not(.horror-mode) #game-hud-top .hud-btn-secondary {
+  display: none;
+}
+
+/* Ẩn các bảng phụ gây rối mắt trên màn hình chính (đã có trong phím B & J) */
+#inventory-bar,
+#community-card,
+#character-status {
+  display: none !important;
+}
+
+/* Gọn thanh phím tắt dưới đáy thành 1 dòng pill thanh lịch */
+#controls-bar {
+  font-size: 11px !important;
+  line-height: 1.3 !important;
+  padding: 5px 14px !important;
+  border-radius: 999px !important;
+  background: rgba(12, 24, 28, 0.82) !important;
+  backdrop-filter: blur(8px);
+  width: auto !important;
+  max-width: 92vw !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  bottom: 8px !important;
+}
+
+/* Sắp xếp gọn hàng nút dưới góc trái và đồng hồ tốc độ */
+#daylife-button,
+#arcade-guide,
+#district-guide {
+  bottom: 8px !important;
+  padding: 6px 11px !important;
+  font-size: 12px !important;
+  border-radius: 999px !important;
+  z-index: 26 !important;
+}
+#daylife-button { left: 14px !important; }
+#arcade-guide { left: 138px !important; background: linear-gradient(135deg, #b45309, #78350f) !important; border-color: #fbbf24 !important; color: #fef3c7 !important; }
+#district-guide { left: 248px !important; }
+#shipper-hud {
+  bottom: 46px !important;
+  left: 14px !important;
+  transform: scale(0.92);
+  transform-origin: bottom left;
+}
+.street-event-banner {
+  top: 76px !important;
+  padding: 8px 14px !important;
+  max-width: min(460px, calc(100vw - 40px)) !important;
+  background: rgba(42, 22, 31, 0.92) !important;
+  backdrop-filter: blur(8px);
+}
+
+/* Thanh chọn Cờ Thế Giang Hồ & Cờ Chấp Cao Thủ + Bàn Cờ Gỗ Hương Chạm Khắc 3D */
+.tea-top-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.tea-top-strip .tea-progress,
+.tea-top-strip .tea-challenge {
+  margin: 0 !important;
+}
+.tea-modes-wrap {
+  display: grid;
+  grid-template-columns: 1.45fr 1fr;
+  gap: 8px;
+  margin: 8px 0;
+}
+@media (max-width: 820px) {
+  .tea-modes-wrap {
+    grid-template-columns: 1fr;
+  }
+}
+.tea-puzzle-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 11px;
+  border-radius: 12px;
+  background: linear-gradient(120deg, rgba(124, 45, 18, 0.82), rgba(67, 20, 7, 0.9));
+  border: 1px solid #f59e0b;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.tea-handicap-bar {
+  background: linear-gradient(120deg, rgba(88, 28, 135, 0.8), rgba(30, 27, 75, 0.9));
+  border-color: #c084fc;
+}
+.tea-puzzle-bar strong {
+  color: #fde68a;
+  font-size: 12.5px;
+  margin-right: 4px;
+}
+.tea-handicap-bar strong {
+  color: #e9d5ff;
+}
+#tea-chess-modal .tea-puzzle-bar button {
+  background: #9a3412;
+  border-color: #fbbf24;
+  color: #fffbeb;
+  font-size: 11.5px;
+  padding: 5px 9px;
+}
+#tea-chess-modal .tea-handicap-bar button {
+  background: #581c87;
+  border-color: #c084fc;
+  color: #f3e8ff;
+}
+#tea-chess-modal .tea-puzzle-bar button.active-puzzle,
+#tea-chess-modal .tea-puzzle-bar button:hover:not(:disabled) {
+  background: #d97706;
+  border-color: #fef08a;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.65);
+}
+#tea-chess-modal .tea-handicap-bar button.active-puzzle,
+#tea-chess-modal .tea-handicap-bar button:hover:not(:disabled) {
+  background: #9333ea;
+  border-color: #f3e8ff;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(192, 132, 252, 0.65);
+}
+
+/* Thanh đo lợi thế thế trận (Evaluation Bar) */
+.tea-eval-bar {
+  position: relative;
+  height: 20px;
+  width: min(100%, 450px);
+  margin: 0 auto 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1e293b, #0f172a);
+  border: 1.5px solid #927042;
+  overflow: hidden;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.6);
+}
+.tea-eval-red {
+  height: 100%;
+  background: linear-gradient(90deg, #b91c1c, #ef4444);
+  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.6);
+}
+.tea-eval-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: #fffbeb;
+  text-shadow: 0 1px 3px #000, 0 0 6px #000;
+  pointer-events: none;
+}
+
+/* Bàn cờ Gỗ Hương & Quân cờ Ngọc Ngà Chạm Khắc 3D */
+#tea-chess-modal .xiangqi-board {
+  border: 12px solid #4a2810;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 236, 189, 0.22), rgba(107, 62, 26, 0.38)),
+    repeating-linear-gradient(88deg, #d7a86e 0px, #e3ba82 14px, #cf9d60 28px);
+  box-shadow:
+    0 16px 36px rgba(0, 0, 0, 0.65),
+    inset 0 0 0 2px #b4834b,
+    inset 0 0 28px rgba(68, 36, 12, 0.55);
+}
+#tea-chess-modal .xiangqi-board svg text {
+  fill: #4a2810;
+  font: bold 24px "Georgia", "Noto Serif", serif;
+  letter-spacing: 4px;
+}
+#tea-chess-modal .xiangqi-point.piece {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  background: radial-gradient(circle at 32% 24%, #fffdf5 0%, #f5e1b9 52%, #cfa56a 88%, #9e733b 100%);
+  border: 2px solid #8a5a26;
+  box-shadow:
+    0 4px 0 #5c3814,
+    0 7px 12px rgba(0, 0, 0, 0.58),
+    inset 0 1px 2px rgba(255, 255, 255, 0.9),
+    inset 0 0 0 3px #c23b2b;
+  color: #a81c14;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+#tea-chess-modal .xiangqi-point.piece.black {
+  background: radial-gradient(circle at 32% 24%, #f8fafc 0%, #e2e8f0 48%, #94a3b8 88%, #475569 100%);
+  border-color: #334155;
+  box-shadow:
+    0 4px 0 #0f172a,
+    0 7px 12px rgba(0, 0, 0, 0.62),
+    inset 0 1px 2px rgba(255, 255, 255, 0.85),
+    inset 0 0 0 3px #1e293b;
+  color: #0f172a;
+}
+#tea-chess-modal .xiangqi-point.piece:hover:not(:disabled) {
+  transform: translate(-50%, -55%) scale(1.06);
+}
+#tea-chess-modal .xiangqi-point .xq-han {
+  font-size: clamp(16px, 2.1vw, 23px);
+  line-height: 1;
+  font-weight: 900;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+#tea-chess-modal .xiangqi-point .xq-vn {
+  font-size: clamp(7.5px, 0.85vw, 9.5px);
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  opacity: 0.92;
+  margin-top: 1px;
+  font-family: system-ui, sans-serif;
+}
+#tea-chess-modal .xiangqi-point.selected {
+  transform: translate(-50%, -58%) scale(1.1);
+  outline: 3px solid #fef08a;
+  box-shadow:
+    0 8px 18px rgba(0, 0, 0, 0.7),
+    0 0 0 5px rgba(250, 204, 21, 0.55),
+    inset 0 0 0 3px #dc2626 !important;
+  z-index: 4;
+}
+#tea-chess-modal .xiangqi-point.in-check-king {
+  animation: king-danger-pulse 0.85s infinite alternate ease-in-out !important;
+}
+@keyframes king-danger-pulse {
+  from { box-shadow: 0 0 0 2px #ef4444, 0 0 14px #ef4444; }
+  to { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0.75), 0 0 26px #dc2626; transform: translate(-50%, -54%) scale(1.08); }
+}
+
+/* Khay quân cờ chiến lợi phẩm đã bắt */
+.tea-captured-tray {
+  display: grid;
+  gap: 8px;
+  background: rgba(15, 29, 24, 0.65);
+  border: 1px solid rgba(189, 167, 121, 0.35);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.tea-captured-tray small {
+  display: block;
+  font-size: 11px;
+  color: #cbd5e1;
+  margin-bottom: 4px;
+}
+.cap-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 24px;
+  align-items: center;
+}
+.cap-row em {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.cap-row span {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.45);
+}
+.cap-black span {
+  background: #e2e8f0;
+  color: #0f172a;
+  border: 1.5px solid #334155;
+}
+.cap-red span {
+  background: #fef3c7;
+  color: #b91c1c;
+  border: 1.5px solid #b91c1c;
+}
+
+/* Đồng hồ Cờ Chớp Sinh Tử, Huy hiệu Sát Chiêu & Bảng Tư Duy Kỳ Vương */
+.tea-turn-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: min(100%, 450px);
+  margin: 0 auto 6px;
+}
+.tea-turn-header .tea-turn {
+  margin: 0 !important;
+}
+.tea-blitz-clock {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  color: #f0f9ff;
+  border: 1.5px solid #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.45);
+  white-space: nowrap;
+}
+.tea-blitz-clock.danger {
+  background: linear-gradient(135deg, #dc2626, #991b1b);
+  border-color: #fca5a5;
+  color: #fff;
+  animation: king-danger-pulse 0.45s infinite alternate;
+}
+.tea-tactical-banner {
+  width: min(100%, 450px);
+  margin: 0 auto 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  color: #fffbeb;
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.2), rgba(180, 83, 9, 0.85), rgba(15, 23, 42, 0.2));
+  border: 1px solid var(--tac-color, #fbbf24);
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.45);
+}
+#tea-chess-modal .xiangqi-board svg text.xq-coord {
+  fill: #5c3415;
+  font: 800 18px system-ui, sans-serif;
+  letter-spacing: 0;
+  text-anchor: middle;
+  opacity: 0.78;
+}
+.tea-ai-mind {
+  background: linear-gradient(145deg, rgba(30, 27, 75, 0.78), rgba(15, 23, 42, 0.88));
+  border: 1px solid rgba(167, 139, 250, 0.5);
+  border-radius: 10px;
+  padding: 9px 11px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #e2e8f0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.tea-ai-mind .ai-mind-head {
+  color: #ddd6fe;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+}
+.tea-ai-mind .ai-mind-meta {
+  color: #94a3b8;
+  font-size: 11.5px;
+  margin-bottom: 4px;
+}
+.tea-ai-mind .ai-mind-meta b {
+  color: #fef08a;
+}
+.tea-ai-mind small {
+  color: #a5b4fc;
+}
+
+/* ==========================================================================
+   BẢN ĐỒ TƯƠNG TÁC TOÀN CẢNH PHÚ THƯỢNG & VÙNG MỞ RỘNG (PHÍM M)
+   ========================================================================== */
+.map-highlight-btn {
+  background: linear-gradient(135deg, #0284c7, #0369a1) !important;
+  border-color: #38bdf8 !important;
+  color: #f0f9ff !important;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.45);
+}
+.map-highlight-btn:hover {
+  background: linear-gradient(135deg, #0369a1, #075985) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.75);
+}
+
+#minimap-container {
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+#minimap-container:hover {
+  transform: translateY(-2px) scale(1.02);
+  border-color: #38bdf8;
+  box-shadow: 0 10px 28px rgba(56, 189, 248, 0.35);
+}
+.minimap-expand-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 800;
+  background: rgba(56, 189, 248, 0.22);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+}
+
+.world-map-card {
+  width: min(1180px, 96vw) !important;
+  max-width: 1180px !important;
+  max-height: 92vh !important;
+  padding: 18px 22px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.world-map-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.world-map-layout {
+  display: grid;
+  grid-template-columns: 1.55fr 1fr;
+  gap: 16px;
+  min-height: 0;
+  flex: 1;
+}
+@media (max-width: 960px) {
+  .world-map-layout {
+    grid-template-columns: 1fr;
+  }
+}
+.world-map-canvas-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(9, 14, 24, 0.92);
+  border: 1.5px solid rgba(56, 189, 248, 0.38);
+  border-radius: 14px;
+  padding: 10px;
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.65);
+}
+#world-map-canvas {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 760 / 480;
+  border-radius: 10px;
+  cursor: crosshair;
+  background: #07111a;
+  display: block;
+}
+.world-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+  padding: 4px 6px 0;
+}
+.world-map-legend small {
+  margin-left: auto;
+  color: #fde047;
+  font-weight: 600;
+}
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.legend-dot.player { background: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
+.legend-dot.expanded { background: #f43f5e; box-shadow: 0 0 8px #f43f5e; }
+.legend-dot.minigame { background: #4ade80; box-shadow: 0 0 8px #4ade80; }
+.legend-dot.quest { background: #facc15; box-shadow: 0 0 8px #facc15; }
+.legend-dot.service { background: #c084fc; box-shadow: 0 0 8px #c084fc; }
+
+.world-map-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  max-height: 530px;
+}
+.world-map-selected-card {
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9));
+  border: 1.5px solid #38bdf8;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+.world-map-selected-card h4 {
+  font-size: 15px;
+  color: #fde047;
+  margin-bottom: 4px;
+}
+.world-map-selected-card p {
+  font-size: 12.5px;
+  color: #e2e8f0;
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+.world-map-selected-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11.5px;
+  color: #7dd3fc;
+  margin-bottom: 10px;
+}
+.world-map-selected-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.world-map-selected-actions .choice-btn {
+  flex: 1;
+  min-width: 115px;
+  padding: 7px 10px;
+  font-size: 12px;
+  text-align: center;
+}
+.world-map-list-header {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  padding: 0 4px;
+}
+.world-map-poi-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+.map-poi-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 8px 11px;
+  cursor: pointer;
+  transition: all 0.14s ease;
+  text-align: left;
+  color: #f1f5f9;
+}
+.map-poi-item:hover, .map-poi-item.active {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: #38bdf8;
+}
+.map-poi-item strong {
+  display: block;
+  font-size: 12.5px;
+  color: #fef08a;
+}
+.map-poi-item small {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.map-poi-dist {
+  font-size: 11px;
+  font-weight: 800;
+  color: #38bdf8;
+  white-space: nowrap;
+}
+
+
+
+

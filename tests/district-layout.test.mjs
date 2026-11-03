@@ -47,11 +47,11 @@ test('every rendered district house has a matching collider and reserves the pav
   for(let i=0;i<mesh.count;i++){
    mesh.getMatrixAt(i,matrix);const position=new THREE.Vector3(),rotation=new THREE.Quaternion(),scale=new THREE.Vector3();matrix.decompose(position,rotation,scale);
    const angle=new THREE.Euler().setFromQuaternion(rotation).y,b=footprintBounds(position.x,position.z,scale.x,scale.z,angle);
-   assert.ok(boxes.some(a=>['minX','maxX','minZ','maxZ'].every(k=>Math.abs(a[k]-b[k])<.0001)),'rendered house needs its actual rotated collider');
+   assert.ok(boxes.some(a=>b.minX>=a.minX-.0001&&b.maxX<=a.maxX+.0001&&b.minZ>=a.minZ-.0001&&b.maxZ<=a.maxZ+.0001),'each terrace tier must remain inside its enclosing ground-floor collider');
    houses++;
   }
  });
- assert.equal(houses,e.buildingFootprints.length);assert.ok(houses>50);
+ assert.ok(houses>=e.buildingFootprints.length);assert.ok(houses>50);
  for(const b of e.buildingFootprints)assert.ok(canPlaceDistrictBuilding(b));
  const streetscape=buildDistrictStreetscape({...api,buildings:e.buildingFootprints});
  assert.ok(streetscape.counts.trees>=10);assert.ok(streetscape.counts.benches>0&&streetscape.counts.bins>0);

@@ -1,6 +1,7 @@
 import {normalizeNeighborhoodStory,recordNeighborhoodHelp} from './neighborhood-story.mjs';
 import {normalizePhotoMystery} from './photo-mystery-state.mjs';
 import {normalizeEastExploration} from './east-exploration-state.mjs';
+import {NEIGHBORHOOD_JOBS} from './neighborhood-jobs.mjs';
 const clamp = (n,a,b) => Math.max(a,Math.min(b,Number(n)||0));
 let cachedDay=0,cachedOffers=null;
 export function dayOffers(day = 1) {
@@ -23,6 +24,11 @@ export function dayOffers(day = 1) {
         {id:'parcel2',x:27,z:-222,title:'Giao bưu kiện: Quán nước chú Bình · đường đê',recipient:'Chú Bình',address:'Quán nước · đường đê',action:'receipt'},
         {id:'return',x:-10.5,z:6.2,title:'Mang sổ ký nhận về gánh xôi',action:'return'}]}
   ];
+  offers.push({id:'garden-care',title:'Chăm góc xanh vườn đào',icon:'🌱',kind:'care',base:18000,
+    story:'Bác làm vườn nhờ kiểm tra hai bồn cây. Đi tới từng bồn, xem tình trạng đất và chọn cách chăm phù hợp. Không giới hạn thời gian.',
+    goals:[{id:'dry-bed',x:-196,z:-37,title:'Kiểm tra bồn cây cạnh ghế vườn đào',action:'care',condition:'Đất khô và tơi, lá hơi rũ. Bác nhờ tưới gốc vừa đủ.',options:['Tưới chậm vào gốc','Đổ đầy nước lên tán','Bón thêm khi đất còn khô'],answer:0},
+      {id:'wet-bed',x:-194,z:-55,title:'Kiểm tra bồn cây cuối vườn đào',action:'care',condition:'Đất còn ướt, lá xanh. Bác dặn đừng tưới thêm.',options:['Tưới thêm một xô','Nhặt lá rụng, giữ đất thoáng','Nén chặt đất quanh gốc'],answer:1}]});
+  offers.push(...NEIGHBORHOOD_JOBS);
   cachedDay=day;cachedOffers=offers;return offers;
 }
 
@@ -43,6 +49,7 @@ export function availableGoals(state, day) {
   const offer = dayOffers(day).find(o=>o.id===state.active?.id);
   if (!offer) return [];
   const missing = offer.goals.filter(g=>!state.active.done.includes(g.id));
+  if(NEIGHBORHOOD_JOBS.some(job=>job.id===offer.id))return missing.slice(0,1);
   if (offer.kind==='delivery') return !state.active.done.includes('pack') ? missing.filter(g=>g.id==='pack') : missing;
   if (offer.kind==='courier') {
     if(!state.active.done.includes('pickup'))return missing.filter(g=>g.id==='pickup');

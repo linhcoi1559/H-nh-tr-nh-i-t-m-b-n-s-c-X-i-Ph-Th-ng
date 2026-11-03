@@ -3,7 +3,7 @@
 export const DISTRICT_ROADS=[
   {id:'phu-gia',name:'PHỐ PHÚ GIA',width:10.8,points:[[42,-55],[42,-125],[35,-180],[20,-230]]},
   {id:'phu-xa',name:'PHỐ PHÚ XÁ',width:8,points:[[-150,-108],[-80,-115],[0,-120],[42,-125],[105,-144],[162,-172],[205,-205]]},
-  {id:'an-duong-vuong',name:'AN DƯƠNG VƯƠNG',width:13,points:[[-190,-178],[-145,-205],[-65,-225],[20,-230],[105,-229],[170,-220],[205,-205],[226,-170]]},
+  {id:'an-duong-vuong',name:'AN DƯƠNG VƯƠNG',width:13,points:[[-220,-50],[-250,-85],[-250,-140],[-190,-178],[-145,-205],[-65,-225],[20,-230],[105,-229],[170,-220],[205,-205],[226,-170],[270,-155],[300,-130],[350,-102]]},
   // Fictional exploration loop, not a claim about a real Google Maps road.
   {id:'riverside-loop',name:'TUYẾN VÒNG VEN SÔNG',width:9,points:[[205,-205],[262,-222],[322,-208],[350,-160],[350,-102],[300,-82],[245,-105],[205,-140],[162,-172]]},
   {id:'market-link',name:'PHỐ CHỢ – ĐƯỜNG RA VEN SÔNG',width:10.8,points:[[162,0],[205,0],[245,-28],[255,-65],[245,-105]]},

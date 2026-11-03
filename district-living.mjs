@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {RoundedBoxGeometry} from 'three/addons/geometries/RoundedBoxGeometry.js';
 import {DISTRICT_ROADS,sampleRoad,inEastPublicArea} from './district-routes.mjs';
 import {footprintBounds,canPlaceDistrictBuilding,neighborhoodBoundarySegments} from './district-layout.mjs';
-import {buildingEnvelope,roofGeometry,archedWindowGeometry,shopCanopyGeometry,createStreetTree,windowFrameGeometry} from './neighborhood-models.mjs';
+import {buildingEnvelope,roofGeometry,archedWindowGeometry,shopCanopyGeometry,createStreetTree,windowFrameGeometry,foliageGeometry} from './neighborhood-models.mjs';
 import {detailVisibility} from './render-budget.mjs';
 
 // Repeated static pieces share geometry/material and are instanced per 64 m
@@ -10,13 +10,23 @@ import {detailVisibility} from './render-budget.mjs';
 export function buildDistrictLiving(api){
  const root=new THREE.Group();root.name='DistrictEverydayLife';api.world.add(root);
  const stone=api.materials.concrete(),brick=api.materials.brick(),wood=api.materials.wood;
- const metal=new THREE.MeshStandardMaterial({color:0x59645e,roughness:.75,metalness:.25}),glass=new THREE.MeshStandardMaterial({color:0x31474a,roughness:.6,side:THREE.DoubleSide});
- const roofMat=new THREE.MeshStandardMaterial({color:0x77564b,roughness:1,side:THREE.DoubleSide});
+ const metal=new THREE.MeshStandardMaterial({color:0x59645e,roughness:.68,metalness:.35}),glass=new THREE.MeshStandardMaterial({color:0x31474a,roughness:.14,metalness:.52,envMapIntensity:1.3,side:THREE.DoubleSide});
+ glass.onBeforeCompile=shader=>{
+  shader.vertexShader='varying vec3 vGlassWorld;\nvarying vec2 vGlassUv;\n'+shader.vertexShader.replace('#include <worldpos_vertex>','#include <worldpos_vertex>\nvec4 gWp=vec4(transformed,1.0);\n#ifdef USE_INSTANCING\ngWp=instanceMatrix*gWp;\n#endif\nvGlassWorld=(modelMatrix*gWp).xyz;\nvGlassUv=position.xy;');
+  shader.fragmentShader='varying vec3 vGlassWorld;\nvarying vec2 vGlassUv;\n'+shader.fragmentShader.replace('#include <color_fragment>',`#include <color_fragment>
+   float roomSeed=fract(sin(floor(vGlassWorld.x*0.33)*23.1+floor(vGlassWorld.z*0.33)*37.7+floor(vGlassWorld.y*0.33)*13.9)*43758.5453);
+   float blinds=step(0.15,sin(vGlassUv.y*26.0+roomSeed*5.0));
+   vec3 warmRoom=mix(vec3(0.16,0.24,0.28),vec3(0.94,0.71,0.39),step(0.46,roomSeed)*0.62);
+   diffuseColor.rgb=warmRoom*mix(0.76,1.0,blinds);`);
+ };
+ glass.customProgramCacheKey=()=>'living-parallax-window-v2';
+ const roofMat=api.materials.roof?.()||new THREE.MeshStandardMaterial({color:0x77564b,roughness:1,side:THREE.DoubleSide});
  const cloth=[0x9b8272,0x5f7e79,0x78839a,0xb1a281].map(color=>new THREE.MeshStandardMaterial({color,roughness:1,side:THREE.DoubleSide}));
  const green=new THREE.MeshStandardMaterial({color:0x5d774c,roughness:1}),red=new THREE.MeshStandardMaterial({color:0x9f5d42,roughness:1});
  const walls=[0xbcb6a5,0xb2b9af,0xc1b49e].map(color=>api.materials.plaster(color));
  const g={house:buildingEnvelope(1,1,1,false,{columns:2,rows:3}),roof:roofGeometry(1,1,1),gable:roofGeometry(1,1,1,'gable'),box:new THREE.BoxGeometry(1,1,1),round:new RoundedBoxGeometry(1,1,1,2,.08),pane:archedWindowGeometry(),frame:archedWindowGeometry(true),rectFrame:windowFrameGeometry(),canopy:shopCanopyGeometry(),sphere:new THREE.SphereGeometry(.5,8,6),cylinder:new THREE.CylinderGeometry(.5,.44,1,10),wheel:new THREE.TorusGeometry(.34,.035,5,16),tube:new THREE.CylinderGeometry(1,1,1,6),cloth:new THREE.PlaneGeometry(1,1)};
  const shirt=new THREE.Shape();shirt.moveTo(-.16,.5);shirt.lineTo(-.45,.34);shirt.lineTo(-.32,.08);shirt.lineTo(-.22,.15);shirt.lineTo(-.22,-.5);shirt.lineTo(.22,-.5);shirt.lineTo(.22,.15);shirt.lineTo(.32,.08);shirt.lineTo(.45,.34);shirt.lineTo(.16,.5);shirt.quadraticCurveTo(0,.28,-.16,.5);g.shirt=new THREE.ShapeGeometry(shirt,4);
+ const leaves=foliageGeometry(.48);
  const cells=new Map(),batches=new Map(),dummy=new THREE.Object3D(),occupied=[...(api.buildings||[])],buildings=[];
  const counts={houses:0,shopCorners:0,bicycles:0,laundry:0,utilityBoxes:0,planters:0,gardenPlants:0,boundarySections:0,gardenPlots:0};
  function add(geometry,mat,x,y,z,w,h,d,angle=0,structural=false){
@@ -32,11 +42,16 @@ export function buildDistrictLiving(api){
   const w=11.8,d=9,h=6.5+index%4*1.4,b=footprintBounds(x,z,w,d,angle);
   if(!canPlaceDistrictBuilding(b)||overlaps(b))return;
   occupied.push(b);buildings.push(b);api.box(x,z,b.width,b.depth);counts.houses++;
-  add(g.house,index%4===0?brick:walls[index%3],x,h/2,z,w,h,d,angle,true);
-  add(index%3===0?g.box:index%3===1?g.roof:g.gable,index%3===0?stone:roofMat,x,h+(index%3===0?.1:.55),z,w+.5,index%3===0?.2:1.2,d+.5,angle,true);
+  const terraced=index%3!==0,body=index%4===0?brick:walls[index%3];
+  if(terraced){
+   add(g.house,body,x,1.55,z,w,3.1,d,angle,true);
+   add(g.house,body,x,3.1+(h-3.1)/2,z,w-1.4,h-3.1,d-1.2,angle,true);
+   add(g.round,stone,x,3.15,z,w+.12,.16,d+.12,angle,true);
+  }else add(g.house,body,x,h/2,z,w,h,d,angle,true);
+  add(index%3===1?g.roof:g.gable,roofMat,x,h+.55,z,w+(terraced?-.9:.5),1.2,d+(terraced?-.7:.5),angle,true);
   const nx=Math.sin(angle),nz=Math.cos(angle),tx=Math.cos(angle),tz=-Math.sin(angle),front=d/2+.08;
   for(let floor=0;floor<Math.floor(h/3);floor++)for(const offset of [-3.4,0,3.4]){
-   const px=x+nx*front+tx*offset,pz=z+nz*front+tz*offset;
+   const retreat=terraced&&floor>0?.6:0,px=x+nx*(front-retreat)+tx*offset,pz=z+nz*(front-retreat)+tz*offset;
    if(floor===0&&offset===0){
     add(g.cloth,index%2?glass:metal,px,1.25,pz,2.6,2.5,1,angle);
     if(index%2===0)for(let rib=0;rib<12;rib++)add(g.box,metal,px+nx*.025,.12+rib*.21,pz+nz*.025,2.6,.025,.025,angle);
@@ -47,6 +62,10 @@ export function buildDistrictLiving(api){
    add(rect?g.rectFrame:g.frame,stone,px+nx*.06,1.5+floor*3,pz+nz*.06,1.52,1.87,rect?.1:1,angle);
   }
   add(g.canopy,cloth[index%4],x+nx*(front+.6),2.65,z+nz*(front+.6),5,1,1.5,angle);
+  if(terraced){
+   for(const offset of [-3.8,-1.9,0,1.9,3.8])add(g.cylinder,metal,x+nx*(front-.05)+tx*offset,3.58,z+nz*(front-.05)+tz*offset,.045,.8,.045,angle);
+   add(g.round,metal,x+nx*(front-.05),3.98,z+nz*(front-.05),8,.045,.045,angle);
+  }
  }
  // A second row prevents the empty base plane showing between frontage houses.
  let index=0;
@@ -84,11 +103,11 @@ export function buildDistrictLiving(api){
   const b=footprintBounds(x,z,9,10,angle);if(!canPlaceDistrictBuilding(b)||overlaps(b))continue;
   occupied.push(b);counts.gardenPlots++;
   add(groundPatch,green,x,.025,z,9,1,10,angle,true);
-  for(const offset of [-3,0,3]){const sx=x+p.dx*offset,sz=z+p.dz*offset;add(g.sphere,green,sx,.6,sz,1.6,1.2,1.5);counts.gardenPlants++;}
+  for(const offset of [-3,0,3]){const sx=x+p.dx*offset,sz=z+p.dz*offset;if(!canPlaceDistrictBuilding(footprintBounds(sx,sz,1.6,1.5)))continue;add(leaves,green,sx,.48,sz,1.6,1.2,1.5);counts.gardenPlants++;}
  }
  for(const z of [109,119,140])for(let x=-70;x<=102;x+=3.5){
   const b=footprintBounds(x,z,1.4,1.4);if(!canPlaceDistrictBuilding(b)||overlaps(b))continue;
-  add(g.sphere,green,x,.62,z,1.8,1.3,1.6);counts.gardenPlants++;
+  add(leaves,green,x,.48,z,1.8,1.3,1.6);counts.gardenPlants++;
  }
  for(let x=-58;x<100;x+=20){
   const z=115,b=footprintBounds(x,z,3,3);if(!canPlaceDistrictBuilding(b)||overlaps(b))continue;

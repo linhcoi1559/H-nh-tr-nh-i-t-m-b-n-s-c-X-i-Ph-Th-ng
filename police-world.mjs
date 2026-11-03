@@ -15,7 +15,17 @@ export function createPoliceWorld(api){
  const state=createEnforcement(),patrols=[[[108,6.4],[-88,6.4]],[[350,-115],[350,-145]]];
  const officers=patrols.map((points,i)=>{const group=new THREE.Group();group.position.set(points[0][0],.08,points[0][1]);root.add(group);return {group,index:i,points,waypoint:1,mixer:null,actions:null,mode:'idle',wait:20};});
  const panel=document.createElement('aside');panel.id='police-status';panel.className='hidden';panel.setAttribute('aria-live','polite');document.body.append(panel);
- let crime=null,arrest=null,report=false,notice='',noticeFor=0,chase=null,jail=null;
+ let crime=null,arrest=null,report=false,notice='',noticeFor=0,chase=null,jail=null,incident=null,incidentCooldown=0;
+ function reportCollision(x,z,speed,kind='collision'){
+  if(incident||incidentCooldown>0||Math.abs(speed)<3)return;
+  const road=nearestRoad(x,z,TRAFFIC_STREETS),street=TRAFFIC_STREETS.find(r=>r.id===road.id);
+  let tangent={x:1,z:0},best=Infinity;
+  for(let i=1;i<street.points.length;i++){const [ax,az]=street.points[i-1],[bx,bz]=street.points[i],dx=bx-ax,dz=bz-az,l=Math.hypot(dx,dz),t=Math.max(0,Math.min(1,((road.x-ax)*dx+(road.z-az)*dz)/(l*l))),d=Math.hypot(ax+dx*t-road.x,az+dz*t-road.z);if(d<best){best=d;tangent={x:dx/l,z:dz/l};}}
+  // Stand beside the scene, leaving the traffic lane free for recovery.
+  const target={x:road.x-tangent.z*(road.width/2+1.4),z:road.z+tangent.x*(road.width/2+1.4)};
+  incident={...target,sourceX:x,sourceZ:z,kind,remaining:12,arrived:false,path:policeRoadPath(officers[1].group.position,target)};
+  if(kind!=='jam')say('🚔 Đã ghi nhận va chạm. Dừng xe an toàn; cán bộ đang tới kiểm tra hiện trường.');
+ }
  const cell=new THREE.Group();cell.position.set(450,0,150);cell.visible=false;api.world.add(cell);const cellMat=new THREE.MeshStandardMaterial({color:0x8a918b,roughness:.9}),barsMat=new THREE.MeshStandardMaterial({color:0x414e53,roughness:.5,metalness:.4});
  for(const [x,y,z,w,h,d]of [[0,-.1,0,5,.2,5],[-2.5,1.6,0,.15,3.2,5],[2.5,1.6,0,.15,3.2,5],[0,1.6,-2.5,5,3.2,.15],[0,.5,-1.9,3,.16,.7]]){const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),cellMat);mesh.position.set(x,y,z);cell.add(mesh);}
  for(let x=-2.4;x<=2.4;x+=.32){const bar=new THREE.Mesh(new THREE.CylinderGeometry(.025,.025,3.2,6),barsMat);bar.position.set(x,1.6,2.4);cell.add(bar);}
@@ -45,6 +55,11 @@ export function createPoliceWorld(api){
   if(jail){jail.remaining=Math.max(0,jail.remaining-dt);panel.classList.remove('hidden');panel.textContent='🚔 Tạm giữ trong game · Còn '+Math.ceil(jail.remaining)+' giây. Tiền phạt đã xử lý: '+jail.paid.toLocaleString('vi-VN')+'đ.';if(jail.remaining<=0){jail=null;cell.visible=false;api.release();Object.assign(state,createEnforcement(),{cooldown:60});say('Đã hết thời gian tạm giữ. Bạn được trả tự do tại trụ sở; xe đỗ gần đó.');}return;}
   root.visible=!context.night;if(context.night||context.paused){panel.classList.add('hidden');return;}
   noticeFor=Math.max(0,noticeFor-dt);
+  incidentCooldown=Math.max(0,incidentCooldown-dt);
+  if(incident&&state.stage==='patrol'&&!crime){
+   const o=officers[1];incident.arrived=distance(o.group.position,incident)<2;
+   if(incident.arrived){incident.remaining-=dt;if(incident.remaining<=0){const wasPlayerNear=distance(context,incident)<16&&incident.kind!=='jam';incident=null;incidentCooldown=30;if(wasPlayerNear)say('Tổ tuần tra đã kiểm tra hiện trường và cho lưu thông trở lại.');}}
+  }
   if(event?.template.id==='thief_chase'&&crime?.event!==event){crime={event,time:0};report=false;}
   if(crime&&crime.event!==event){crime=null;report=false;}
   if(!crime&&!arrest&&event?.template.id!=='thief_chase')api.hideCaptured?.();
@@ -60,6 +75,7 @@ export function createPoliceWorld(api){
    if(i===0&&crime){target=crime.event;speed=3.8;}
    else if(i===0&&arrest){target=arrest;speed=0;}
    else if(state.stage!=='patrol'&&state.officer===i){const road=nearestRoad(context.x,context.z,TRAFFIC_STREETS);target={x:road.x,z:road.z};speed=state.stage==='ticket'?3.6:2.6;}
+   else if(i===1&&incident){while(incident.path.length&&distance(o.group.position,incident.path[0])<2)incident.path.shift();target=incident.path[0]||incident;speed=incident.arrived?0:3.2;}
    else if(o.wait>0){o.wait-=dt;target={x:o.group.position.x,z:o.group.position.z};speed=0;}
    else{const [x,z]=o.points[o.waypoint];target={x,z};if(distance(o.group.position,target)<.5){o.waypoint=1-o.waypoint;o.wait=8;}}
    move(o,target,speed,dt);o.mixer?.update(dt);
@@ -83,11 +99,12 @@ export function createPoliceWorld(api){
    const vehicle=api.cars().sort((a,b)=>distance(a.mesh.position,context)-distance(b.mesh.position,context))[0];
    if(vehicle){vehicle.pursuing=true;vehicle.mesh.visible=true;chase={vehicle,time:0,refresh:0,path:[]};say('🚨 Xe cảnh sát đang truy đuổi! Dừng xe, xuống xe và làm việc với cán bộ. Bị bắt khi bỏ chạy sẽ bị phạt và tạm giữ trong game.');}
   }
+  if(incident&&state.stage==='patrol'&&!crime&&incident.kind!=='jam'&&distance(context,incident)<16){notice=incident.arrived?'🚔 Cán bộ đang giải quyết hiện trường · Bấm E để phối hợp.':'🚔 Tổ tuần tra đang tới hiện trường.';noticeFor=Math.max(noticeFor,.2);}
   const visible=state.stage!=='patrol'||(crime&&distance(officers[0].group.position,context)<100)||noticeFor>0;
   panel.classList.toggle('hidden',!visible);
   if(visible){const text=state.stage==='warning'?'🚔 '+state.violation.label+' · Còn '+Math.ceil(state.remaining)+' giây để dừng xe.':state.stage==='ticket'?(chase?'🚨 Đang bị xe cảnh sát truy đuổi! ':'🚔 Biên bản: ')+state.violation.label+' · '+state.violation.fine.toLocaleString('vi-VN')+'đ trong game. Dừng, xuống xe F rồi tới cán bộ bấm E.':crime?'🚔 Cảnh sát đang truy đuổi kẻ giật túi · K: báo vị trí hỗ trợ':notice;panel.textContent=text;}
  }
- function interaction(context){return state.stage==='ticket'&&!context.riding&&distance(officers[state.officer].group.position,context)<4;}
+ function interaction(context){return !context.riding&&(state.stage==='ticket'&&distance(officers[state.officer].group.position,context)<4||incident?.arrived&&distance(officers[1].group.position,context)<4);}
  function interact(context){if(!interaction(context))return false;const result=settleTicket(state,api.balance());api.pay(result.paid);say(result.paid?'Đã xử lý vi phạm trong game: '+result.label+' · -'+result.paid.toLocaleString('vi-VN')+'đ.':'Bạn không đủ tiền; tổ tuần tra ghi nhận nhắc nhở, không tạo khoản nợ.');return true;}
- return {isDetained:()=>!!jail,update,attachCharacters,reportCrime,interact,interaction,state,officers,debug:()=>({stage:jail?'jail':chase?'pursuit':state.stage,detention:jail?.remaining||0,remaining:state.remaining,violation:state.violation?.id,crime:!!crime,arrest:arrest?.time||0,officers:officers.map(o=>({x:o.group.position.x,z:o.group.position.z,mode:o.mode}))})};
+ return {reportCollision,isDetained:()=>!!jail,update,attachCharacters,reportCrime,interact:context=>{if(incident?.arrived&&state.stage!=='ticket'&&interaction(context)){say('Cán bộ: Đã ghi nhận trình bày. Hãy đứng trên vỉa hè, kiểm tra xe trước khi tiếp tục.');incident.remaining=Math.min(incident.remaining,3);return true;}return interact(context);},interaction,state,officers,debug:()=>({incident:incident?{...incident}:null,stage:jail?'jail':chase?'pursuit':state.stage,detention:jail?.remaining||0,remaining:state.remaining,violation:state.violation?.id,crime:!!crime,arrest:arrest?.time||0,officers:officers.map(o=>({x:o.group.position.x,z:o.group.position.z,mode:o.mode}))})};
 }

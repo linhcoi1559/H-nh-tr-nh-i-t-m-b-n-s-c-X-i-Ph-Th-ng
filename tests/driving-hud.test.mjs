@@ -8,6 +8,7 @@ test('game clock formats saved hours without replacing them with a generic dayti
 test('whole-neighborhood boundary stays outside every road and public area and closes western outward views',()=>{
  const walls=neighborhoodBoundarySegments();assert.ok(walls.length>100);
  for(const b of walls)assert.ok(canPlaceDistrictBuilding(b));
- for(const a of [Math.PI,Math.PI*1.25,Math.PI*1.5])assert.ok(walls.some(b=>segmentHitsBounds({x:-214,z:0},{x:-214+Math.sin(a)*200,z:Math.cos(a)*200},b)));
+ // The western loop now continues beyond the former 200 m view probe.
+ for(const a of [Math.PI,Math.PI*1.25,Math.PI*1.5])assert.ok(walls.some(b=>segmentHitsBounds({x:-214,z:0},{x:-214+Math.sin(a)*400,z:Math.cos(a)*400},b)));
  for(const r of DISTRICT_ROADS)for(let i=1;i<r.points.length;i++)for(const wall of walls)assert.equal(segmentHitsBounds({x:r.points[i-1][0],z:r.points[i-1][1]},{x:r.points[i][0],z:r.points[i][1]},wall,r.width/2+3),false);
 });

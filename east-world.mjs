@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {EAST_PUBLIC_AREAS} from './district-routes.mjs';
-import {createParkBench,createTeaTable,createStool,createStreetTree,shopCanopyGeometry,buildingEnvelope,roofGeometry,archedWindowGeometry} from './neighborhood-models.mjs';
+import {createParkBench,createTeaTable,createStool,createStreetTree,shopCanopyGeometry,buildingEnvelope,roofGeometry,archedWindowGeometry,foliageGeometry} from './neighborhood-models.mjs';
 import {worldUVs} from './visual-materials.mjs';
 
 export function buildEastWorld(api){
@@ -74,7 +74,7 @@ export function buildEastWorld(api){
  sign(225,3,'SÂN NGHỈ PHỐ CHỢ','Đi tiếp → Chợ phiên → Tuyến vòng ven sông');
  for(const x of [219,238]){
   mesh(new THREE.CylinderGeometry(.65,.48,.6,12),wood,x,.39,6);
-  const shrub=mesh(new THREE.SphereGeometry(.8,12,8),green,x,1.1,6);shrub.scale.set(1,.75,1);api.box(x,6,1.3,1.3);
+  const shrub=mesh(foliageGeometry(.82),green,x,1.02,6);shrub.scale.set(1.05,.92,1.05);api.box(x,6,1.3,1.3);
  }
  // Backdrop terminates the outer shore, without colliders on the playable road.
  for(let i=0;i<22;i++){const shrub=mesh(new THREE.SphereGeometry(1,10,6),green,737,1.4,-540+i*36);shrub.scale.set(12,2.8+i%3,23);}

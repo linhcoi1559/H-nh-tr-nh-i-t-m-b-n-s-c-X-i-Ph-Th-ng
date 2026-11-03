@@ -27,3 +27,41 @@ export function districtPath(start,target){
   const result=[...prefix,...path,...suffix];return result.filter((p,i)=>!i||distance(p,result[i-1])>.05);
 }
 export function nextDistrictWaypoint(start,path){return path.find(p=>distance(start,p)>3)||path.at(-1)||null;}
+export function streetSidePath(start,target){
+  if(!start||!target)return [target];
+  const inside=p=>p.z<-55||p.z>55||p.x>162||p.x<-182;
+  if(inside(start)||inside(target))return districtPath(start,target);
+  const pts=[];
+  const push=p=>{if(!pts.length||distance(pts.at(-1),p)>.25)pts.push({x:p.x,z:p.z});};
+  push(start);
+  const inAlley41=p=>Math.abs(p.x+67)<10&&p.z<-8.5;
+  const inXoiLane=p=>p.x<-62&&p.z<-26;
+  const inMemorial=p=>Math.abs(p.x+22)<10&&p.z<-8.5;
+  const inPark=p=>p.x>112&&p.z>8.5;
+  const inSchoolLane=p=>Math.abs(p.x+15)<8.5&&p.z>8.5;
+  const inPhuGia=p=>Math.abs(p.x-42)<9&&Math.abs(p.z)>8.5;
+  if(inXoiLane(start)){push({x:-67,z:-37.5});push({x:-67,z:-6.5});}
+  else if(inAlley41(start)){push({x:-67,z:-6.5});}
+  else if(inMemorial(start)){push({x:-20,z:-24});push({x:-20,z:-6.5});}
+  else if(inPark(start)){push({x:126,z:6.8});}
+  else if(inSchoolLane(start)){push({x:-15,z:6.8});}
+  else if(inPhuGia(start)){push({x:42,z:start.z<0?-6.5:6.8});}
+  const cur=pts.at(-1);
+  let targetEntry={x:target.x,z:target.z<0?-6.5:6.8};
+  const tail=[];
+  if(inXoiLane(target)){targetEntry={x:-67,z:-6.5};tail.push({x:-67,z:-37.5},target);}
+  else if(inAlley41(target)){targetEntry={x:-67,z:-6.5};tail.push(target);}
+  else if(inMemorial(target)){targetEntry={x:-20,z:-6.5};tail.push({x:-20,z:-24},target);}
+  else if(inPark(target)){targetEntry={x:126,z:6.8};tail.push(target);}
+  else if(inSchoolLane(target)){targetEntry={x:-15,z:6.8};tail.push(target);}
+  else if(inPhuGia(target)){targetEntry={x:42,z:target.z<0?-6.5:6.8};tail.push(target);}
+  else{tail.push(target);}
+  if(Math.abs(cur.x-targetEntry.x)>4.5||Math.abs(cur.z-targetEntry.z)>4.5){
+    const roadZ=targetEntry.z<0?-2.2:2.2;
+    push({x:cur.x,z:roadZ});
+    push({x:targetEntry.x,z:roadZ});
+  }
+  push(targetEntry);
+  for(const t of tail)push(t);
+  return pts.slice(1);
+}

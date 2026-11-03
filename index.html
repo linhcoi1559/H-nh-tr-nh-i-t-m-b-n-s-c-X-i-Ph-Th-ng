@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Game 3D: Khám Phá Phố Phú Thượng (Tây Hồ, Hà Nội)</title>
-  <link rel="stylesheet" href="style.css?v=20261030-crosswalk-access" />
+  <link rel="stylesheet" href="style.css?v=20261103-world-map-expanded" />
   <script type="importmap">
     {
       "imports": {
@@ -53,38 +53,41 @@
     </div>
 
     <div class="hud-actions">
-      <button id="camera-mode-btn" class="hud-btn active" title="Phím V: Chuyển đổi Góc nhìn Thứ 3 (Thấy nhân vật xoay đầu) / Thứ nhất (FPS)">
-        🎥 Góc Nhìn: TPS (V)
+      <button id="world-map-btn" class="hud-btn map-highlight-btn" title="Phím M: Mở Bản Đồ Toàn Cảnh Phú Thượng, Dẫn Đường GPS & Dịch Chuyển Nhanh">
+        🗺️ Bản Đồ (M)
+      </button>
+      <button id="camera-mode-btn" class="hud-btn active" title="Phím V: Chuyển đổi Góc nhìn Thứ 3 (TPS) / Thứ nhất (FPS)">
+        🎥 Góc nhìn (V)
       </button>
       <button id="journal-btn" class="hud-btn" title="Phím J: Mở Hồ sơ Kịch bản 3 Chương & Dẫn đường GPS">
-        📖 Kịch Bản (J)
+        📖 Nhiệm vụ (J)
       </button>
       <button id="inventory-btn" class="hud-btn" title="Phím B hoặc I: Mở Túi Đồ xem chi tiết các vật phẩm đang mang & nơi sử dụng">
-        🎒 Túi Đồ (B)
+        🎒 Túi đồ (B)
       </button>
-      <button id="flashlight-toggle-btn" class="hud-btn" title="Phím T: Bật / tắt Đèn Pin chiếu sáng cá nhân">
+      <button id="flashlight-toggle-btn" class="hud-btn hud-btn-secondary" title="Phím T: Bật / tắt Đèn Pin chiếu sáng cá nhân">
         🔦 Đèn Pin (T)
       </button>
       <button id="vehicle-toggle-btn" class="hud-btn" title="Phím F: Lên / Xuống Xe Máy dạo phố">
-        🛵 Lái Xe Máy (F)
+        🛵 Xe máy (F)
       </button>
-      <button id="shipper-garage-btn" class="hud-btn shipper-highlight-btn" title="G: dùng dịch vụ khi xuống xe tại xưởng hoặc quán. C: nhận đơn ship nhanh ở mọi nơi.">
+      <button id="shipper-garage-btn" class="hud-btn shipper-highlight-btn" title="Phím G: Mở Sổ Tay Hoạt Động, Nhận đơn Ship & dẫn đường tới các điểm chơi">
         🌟 Hoạt Động & Độ Xe (G)
       </button>
-      <button id="headlight-toggle-btn" class="hud-btn" title="Phím L: Bật / tắt đèn pha xe máy">
+      <button id="headlight-toggle-btn" class="hud-btn hud-btn-secondary" title="Phím L: Bật / tắt đèn pha xe máy">
         💡 Đèn Xe (L)
       </button>
       <button id="photo-btn" class="hud-btn" title="Phím P: Chụp ảnh kỷ niệm địa danh Phú Thượng">
-        📸 Chụp Ảnh (P)
+        📸 Ảnh (P)
       </button>
-      <button id="end-day-btn" class="hud-btn" title="Tổng kết các việc đã làm trong ngày">
+      <button id="end-day-btn" class="hud-btn hud-btn-secondary" title="Tổng kết các việc đã làm trong ngày">
         🌙 Kết Ngày
       </button>
       <button id="story-mode-btn" class="hud-btn horror-btn" title="Bắt đầu cốt truyện Đơn Hàng Số 41">
-        ▶ Cốt Truyện
+        🕯️ Ngõ 41
       </button>
       <button id="settings-btn" class="hud-btn" title="Phím O: Mở bảng Cấu hình Đồ họa & Điều khiển">
-        ⚙️ Cấu Hình (O)
+        ⚙️ (O)
       </button>
     </div>
   </header>
@@ -98,6 +101,12 @@
     <span class="inv-open-hint">🔍 Xem túi (B)</span>
   </div>
   <div id="balance-alert" class="hidden" role="status" aria-live="polite"></div>
+
+  <!-- AAA Gameplay: Active Food Buffs, High-Speed Radial Lines & Stunt Badges -->
+  <div id="active-buffs-bar" class="active-buffs-bar" aria-label="Hiệu ứng món ăn đang kích hoạt"></div>
+  <div id="speed-lines-overlay" class="speed-lines-overlay" aria-hidden="true"></div>
+  <div id="stunt-action-popup" class="stunt-action-popup" aria-live="assertive"></div>
+  <div id="sonar-hud-radar" class="sonar-hud-radar" aria-hidden="true"></div>
 
   <aside id="community-card" aria-label="Tiến triển khu phố">
     <div class="community-title"><span>🤝 Uy tín khu phố</span><strong id="community-reputation">0</strong></div>
@@ -346,9 +355,9 @@
       <div id="shipper-summary-strip" class="inventory-summary-strip"></div>
 
       <div class="shipper-tabs">
-        <button type="button" id="tab-btn-orders" class="shipper-tab-btn active">⚡ Đua Shipper (5 Tuyến)</button>
+        <button type="button" id="tab-btn-orders" class="shipper-tab-btn active">⚡ Đua Shipper (8 Tuyến)</button>
         <button type="button" id="tab-btn-garage" class="shipper-tab-btn">🔧 Xưởng Độ Xe 3D</button>
-        <button type="button" id="tab-btn-business" class="shipper-tab-btn">🍙 Mở Quán & Sự Kiện</button>
+        <button type="button" id="tab-btn-business" class="shipper-tab-btn">🍙 Mở Quán & Lễ Hội</button>
         <button type="button" id="tab-btn-style" class="shipper-tab-btn">🐕 Thú Cưng & Đồ Hiệu</button>
         <button type="button" id="tab-btn-trophies" class="shipper-tab-btn">🏆 Cúp Kỷ Lục</button>
       </div>
@@ -495,8 +504,8 @@
             <option value="low">Thấp (Tối ưu FPS mượt)</option>
             <option value="performance">Ưu tiên tốc độ (bóng nhẹ · tắt bloom)</option>
             <option value="medium">Trung bình (Cân bằng)</option>
-            <option value="high">Cao (Sắc nét)</option>
-            <option value="ultra">Siêu Thực (Ultra · Lá thu & Ánh sáng Điện ảnh)</option>
+              <option value="high">Cao (Vật liệu môi trường · bóng đổ)</option>
+              <option value="ultra">Ultra (Sắc nét · bóng đổ · nhiều chi tiết)</option>
           </select>
         </div>
 
@@ -563,48 +572,81 @@
     </section>
   </div>
 
-  <!-- Mini-map Radar (Bottom Right) -->
-  <div id="minimap-container">
-    <div class="minimap-title">🧭 Bản Đồ Khu Phố Phú Thượng</div>
+  <!-- Mini-map Radar (Bottom Right - Clickable to open Full World Map) -->
+  <div id="minimap-container" role="button" tabindex="0" title="Nhấp hoặc bấm Phím M để mở Bản Đồ Lớn Phú Thượng">
+    <div class="minimap-title">🗺️ Bản Đồ Khu Phố Phú Thượng <span class="minimap-expand-badge">[M · Mở Rộng]</span></div>
     <canvas id="minimap" width="230" height="175"></canvas>
+  </div>
+
+  <!-- Full-Screen Interactive World Map Modal (Phím M) -->
+  <div id="world-map-modal" class="activity-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="world-map-title">
+    <section class="activity-card world-map-card">
+      <div class="settings-header">
+        <div>
+          <div class="activity-kicker">BẢN ĐỒ TƯƠNG TÁC TOÀN CẢNH · ĐỊNH VỊ GPS, CHƠI NGAY & DỊCH CHUYỂN NHANH</div>
+          <h2 id="world-map-title">🗺️ Bản Đồ Khu Phố Phú Thượng & Vùng Mở Rộng Ven Sông Hồng</h2>
+        </div>
+        <button id="world-map-close-top" class="settings-icon-close" title="Đóng (ESC / M)">✕</button>
+      </div>
+
+      <div class="world-map-filter-bar" id="world-map-filter-bar">
+        <button type="button" class="shipper-tab-btn active" data-map-cat="all">🌏 Tất Cả Địa Điểm (20)</button>
+        <button type="button" class="shipper-tab-btn" data-map-cat="expanded">🏮 Khu Mở Rộng & Lễ Hội Mới</button>
+        <button type="button" class="shipper-tab-btn" data-map-cat="minigame">🎮 Mini-Game & Giải Trí</button>
+        <button type="button" class="shipper-tab-btn" data-map-cat="quest">🎯 Nhiệm Vụ & Di Sản</button>
+        <button type="button" class="shipper-tab-btn" data-map-cat="service">🛵 Dịch Vụ & Độ Xe</button>
+      </div>
+
+      <div class="world-map-layout">
+        <div class="world-map-canvas-wrap">
+          <canvas id="world-map-canvas" width="760" height="480"></canvas>
+          <div class="world-map-legend">
+            <span><i class="legend-dot player"></i> Vị trí của bạn</span>
+            <span><i class="legend-dot expanded"></i> Lễ hội & Khu mở rộng</span>
+            <span><i class="legend-dot minigame"></i> Mini-game & Thể thao</span>
+            <span><i class="legend-dot quest"></i> Nhiệm vụ & Di sản</span>
+            <span><i class="legend-dot service"></i> Xưởng Xe & Quán Xôi</span>
+            <small>💡 Mẹo: Nhấp trực tiếp vào bất kỳ điểm nào trên bản đồ để chọn, Dịch Chuyển Nhanh hoặc Chơi Ngay!</small>
+          </div>
+        </div>
+
+        <div class="world-map-sidebar">
+          <div id="world-map-selected-card" class="world-map-selected-card"></div>
+          <div class="world-map-list-header">📍 DANH SÁCH ĐỊA ĐIỂM & HOẠT ĐỘNG</div>
+          <div id="world-map-poi-list" class="world-map-poi-list"></div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <div id="character-status">
     <span class="status-dot"></span><span id="motion-label">Đi bộ dạo phố</span>
     <span class="status-divider"></span><span>⭐ Di sản: <strong id="relic-counter">0/12</strong></span>
-    <span class="status-divider"></span><span>📸 Ảnh: <strong id="photo-counter">0/8</strong></span>
+    <span class="status-divider"></span><span>📸 Ảnh: <strong id="photo-counter">0/12</strong></span>
   </div>
 
   <!-- Controls Footer -->
   <footer id="controls-bar">
-    <span id="control-move">🎮 <strong>W, A, S, D:</strong> Di chuyển</span>
+    <span id="control-move">🎮 <strong>WASD:</strong> Di chuyển</span>
     <span>•</span>
-    <span><strong>Phím V:</strong> Đổi Góc Nhìn (TPS/FPS)</span>
+    <span><strong>M:</strong> Bản đồ lớn</span>
     <span>•</span>
-    <span><strong>Phím B:</strong> Túi Đồ</span>
+    <span id="control-shift"><strong>Shift:</strong> Chạy/Nitro</span>
     <span>•</span>
-    <span><strong>Phím J:</strong> Kịch Bản</span>
+    <span id="control-space"><strong>Space:</strong> Nhảy/Phanh</span>
     <span>•</span>
-    <span id="control-shift"><strong>Shift:</strong> Chạy nhanh</span>
+    <span><strong>E:</strong> Tương tác</span>
     <span>•</span>
-    <span id="control-space"><strong>Space:</strong> Nhảy / Phanh xe</span>
+    <span><strong>F:</strong> Xe máy</span>
     <span>•</span>
-    <span><strong>Phím E:</strong> Tương tác</span>
+    <span><strong>G:</strong> Chơi nhanh & Độ xe</span>
     <span>•</span>
-    <span><strong>Phím T:</strong> Đèn Pin</span>
+    <span><strong>N:</strong> Việc phố</span>
     <span>•</span>
-    <span><strong>Phím Q:</strong> Trấn tĩnh</span>
-    <span>•</span>
-    <span><strong>Phím F:</strong> Xe Máy</span>
-    <span>•</span>
-    <span><strong>Phím G:</strong> Shipper & Độ Xe</span>
-    <span>•</span>
-    <span><strong>K:</strong> Báo trộm · <strong>Y:</strong> Dẫn đường sự kiện · <strong>Tab:</strong> Dừng xe / thả chuột</span>
-    <span>•</span>
-    <span><strong>Phím O:</strong> Cấu hình</span>
+    <span><strong>C:</strong> Ship nhanh</span>
   </footer>
 
-  <script type="module" src="app.js?v=20261030-player-road-access"></script>
+  <script type="module" src="app.js?v=20261103-world-map-expanded"></script>
 </body>
 </html>
 

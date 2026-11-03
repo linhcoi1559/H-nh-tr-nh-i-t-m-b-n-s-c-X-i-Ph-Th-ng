@@ -8,9 +8,22 @@ import {footprintBounds,canPlaceDistrictBuilding,curbClearOfBend} from './distri
 export function buildDistrictExtension(api){
   const root=new THREE.Group();root.name='PhuGiaPhuXaExtension';api.world.add(root);
   const pavement=api.materials.concrete(),wall=api.materials.plaster(0xc3baa2),brick=api.materials.brick();
-  const trim=new THREE.MeshStandardMaterial({color:0x646e67,roughness:.88}),glass=new THREE.MeshStandardMaterial({color:0x293b3e,roughness:.24,metalness:.2,side:THREE.DoubleSide}),roof=new THREE.MeshStandardMaterial({color:0x774d3a,roughness:.9,side:THREE.DoubleSide});
-  const paint=new THREE.MeshStandardMaterial({color:0xe8e3d4,roughness:.95,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-5});
-  const foliage=new THREE.MeshStandardMaterial({color:0x536f45,roughness:.96,side:THREE.DoubleSide});
+  const trim=new THREE.MeshStandardMaterial({color:0x646e67,roughness:.76,metalness:.14}),glass=new THREE.MeshStandardMaterial({color:0x293b3e,roughness:.12,metalness:.55,envMapIntensity:1.35,side:THREE.DoubleSide}),roof=api.materials.roof?.()||new THREE.MeshStandardMaterial({color:0x774d3a,roughness:.82,side:THREE.DoubleSide});
+  glass.onBeforeCompile=shader=>{
+    shader.vertexShader='varying vec3 vGlassWorld;\nvarying vec2 vGlassUv;\n'+shader.vertexShader.replace('#include <worldpos_vertex>','#include <worldpos_vertex>\nvec4 gWp=vec4(transformed,1.0);\n#ifdef USE_INSTANCING\ngWp=instanceMatrix*gWp;\n#endif\nvGlassWorld=(modelMatrix*gWp).xyz;\nvGlassUv=position.xy;');
+    shader.fragmentShader='varying vec3 vGlassWorld;\nvarying vec2 vGlassUv;\n'+shader.fragmentShader.replace('#include <color_fragment>',`#include <color_fragment>
+      float roomSeed=fract(sin(floor(vGlassWorld.x*0.35)*19.7+floor(vGlassWorld.z*0.35)*43.1+floor(vGlassWorld.y*0.33)*11.3)*43758.5453);
+      float blinds=step(0.18,sin(vGlassUv.y*28.0+roomSeed*6.0));
+      float curtain=smoothstep(0.18,0.48,abs(vGlassUv.x));
+      float depthShade=0.55+0.45*smoothstep(-0.45,0.45,vGlassUv.y);
+      vec3 warmRoom=mix(vec3(0.14,0.22,0.26),vec3(0.92,0.68,0.36),step(0.42,roomSeed)*0.65);
+      vec3 interior=warmRoom*depthShade*mix(0.75,1.0,blinds)*mix(1.0,0.68,curtain);
+      float mullion=smoothstep(0.032,0.015,abs(vGlassUv.x))+smoothstep(0.032,0.015,abs(vGlassUv.y-0.05));
+      diffuseColor.rgb=mix(interior,vec3(0.82,0.80,0.74),clamp(mullion,0.0,1.0)*0.65);`);
+  };
+  glass.customProgramCacheKey=()=>'district-parallax-window-v2';
+  const paint=new THREE.MeshStandardMaterial({color:0xe8e3d4,roughness:.88,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-5});
+  const foliage=new THREE.MeshStandardMaterial({color:0x536f45,roughness:.78,emissive:0x132010,emissiveIntensity:.35,side:THREE.DoubleSide});
   const shopSigns=new THREE.MeshStandardMaterial({roughness:1,side:THREE.DoubleSide});
   if(typeof document!=='undefined'){
     const canvas=document.createElement('canvas');canvas.width=1024;canvas.height=64;const c=canvas.getContext('2d');
@@ -31,10 +44,15 @@ export function buildDistrictExtension(api){
   const river=new THREE.Mesh(new THREE.PlaneGeometry(650,100).rotateX(-Math.PI/2),waterMat);river.position.set(10,-.025,-330);root.add(river);
   let frontageAnchor=null;
   const buildingFootprints=[],frontages=[];
-  function building(mat,x,y,z,w,h,d,rotation=0){
+  function building(mat,x,y,z,w,h,d,rotation=0,terraced=false){
     const bounds=footprintBounds(x,z,w,d,rotation);
     if(!canPlaceDistrictBuilding(bounds))return false;
-    instance(mat,x,y,z,w,h,d,rotation,'building');
+    if(terraced){
+      const lower=Math.min(3.15,h*.48);
+      instance(mat,x,lower/2,z,w,lower,d,rotation,'building');
+      instance(mat,x,lower+(h-lower)/2,z,w-1.4,h-lower,d-1.2,rotation,'building');
+      instance(pavement,x,lower+.07,z,w+.12,.14,d+.12,rotation);
+    }else instance(mat,x,y,z,w,h,d,rotation,'building');
     api.box(x,z,bounds.width,bounds.depth);buildingFootprints.push(bounds);return true;
   }
   function instance(mat,x,y,z,w,h,d,rotation=0,role='detail'){
@@ -75,8 +93,9 @@ export function buildDistrictExtension(api){
         if((z>-96&&z<65&&x>-190&&x<185)||nearestRoad(x,z,others).distance<15||inEastPublicArea(x,z,12))continue;
         frontageAnchor={x,z};
         const height=7.5+(i+r)%4*2.2,width=9,depth=7;
-        if(!building((i+r)%3?wall:brick,x,height/2,z,width,height,depth,facadeAngle)){frontageAnchor=null;continue;}
-        instance(roof,x,height+.65,z,9.5,1.3,7.5,facadeAngle,i%2?'roof':'gable');
+        const terraced=(i+r)%3!==0;
+        if(!building((i+r)%3?wall:brick,x,height/2,z,width,height,depth,facadeAngle,terraced)){frontageAnchor=null;continue;}
+        instance(roof,x,height+.65,z,terraced?8.1:9.5,1.3,terraced?6.3:7.5,facadeAngle,i%2?'roof':'gable');
         const frontX=x-nx*3.57,frontZ=z-nz*3.57;
         const facingAngle=facadeAngle+(side===1?Math.PI:0);
         frontages.push({x:frontX,z:frontZ,angle:facingAngle,height,index:frontages.length,shopKind:(i+r)%4});
@@ -84,8 +103,9 @@ export function buildDistrictExtension(api){
         for(let floor=0;floor<Math.floor(height/3);floor++)for(const offset of [-2.5,0,2.5]){
           // The centre bay on the ground floor is the door, not a second window.
           if(floor===0&&offset===0)continue;
-          facadeOpening(frontX+p.dx*offset,1.7+floor*3,frontZ+p.dz*offset,1.35,1.5,1.5,1.65,facingAngle,arched);
-          instance(trim,frontX+p.dx*offset,1+floor*3,frontZ+p.dz*offset,1.65,.09,.26,facadeAngle);
+          const retreat=terraced&&floor>0?.6:0;
+          facadeOpening(frontX+p.dx*offset+nx*retreat,1.7+floor*3,frontZ+p.dz*offset+nz*retreat,1.35,1.5,1.5,1.65,facingAngle,arched);
+          instance(trim,frontX+p.dx*offset+nx*retreat,1+floor*3,frontZ+p.dz*offset+nz*retreat,1.65,.09,.26,facadeAngle);
         }
         // Recessed shop shutters, awnings and balcony rails share the same batches.
         instance(shopSigns,frontX-nx*.08,2.85,frontZ-nz*.08,3.6,.85,.08,facadeAngle+(side===1?Math.PI:0),'shop-sign-'+((i+r)%4));
@@ -97,7 +117,7 @@ export function buildDistrictExtension(api){
         instance(trim,frontX+p.dx*3.8,height/2,frontZ+p.dz*3.8,.09,height,.09,facadeAngle,'pipe');
         if(i%2===0)instance(trim,x,height+1.15,z,1.2,1.6,1.2,facadeAngle,'tank');
         for(const edge of [-1,1])for(let floor=1;floor<Math.floor(height/3);floor++){
-          const sx=x+p.dx*edge*4.56,sz=z+p.dz*edge*4.56,sideAngle=facadeAngle+edge*Math.PI/2;
+          const sx=x+p.dx*edge*(terraced?3.86:4.56),sz=z+p.dz*edge*(terraced?3.86:4.56),sideAngle=facadeAngle+edge*Math.PI/2;
           for(const slot of [-1.6,1.6]){
             facadeOpening(sx+nx*slot,1.7+floor*3,sz+nz*slot,1.2,1.45,1.36,1.61,sideAngle,true,.1);
           }

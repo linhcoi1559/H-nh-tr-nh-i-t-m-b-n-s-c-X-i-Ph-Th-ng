@@ -1,4 +1,10 @@
-# Tiệm Giải Trí 41
+# Đã thay thế: sạp cờ tướng và trà đá
+
+> Bản thiết kế sòng bạc cũ được giữ lại chỉ để tương thích với save/migration và lịch sử phát triển. Trong runtime hiện tại, địa điểm này đã được **sạp cờ tướng Phú Thượng**; không còn Blackjack, poker hay vòng quay truy cập được từ game.
+
+Thiết kế đang chạy được ghi ở [TEA_CHESS_PASS.md](TEA_CHESS_PASS.md).
+
+## Tài liệu lịch sử (không còn là gameplay hiện tại)
 
 ## Implemented games
 

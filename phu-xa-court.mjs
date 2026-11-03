@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import {buildingEnvelope,roofGeometry,archedWindowGeometry,createStreetTree,createParkBench,createTeaTable,createStool,shopCanopyGeometry} from './neighborhood-models.mjs';
+import {buildingEnvelope,roofGeometry,archedWindowGeometry,createStreetTree,createParkBench,createTeaTable,createStool,shopCanopyGeometry,foliageGeometry} from './neighborhood-models.mjs';
 import {worldUVs} from './visual-materials.mjs';
 import {footprintBounds,canPlaceDistrictBuilding} from './district-layout.mjs';
 
@@ -8,7 +8,7 @@ export function buildPhuXaCourt(api){
  const details=new THREE.Group();details.userData.staticBatch=true;root.add(details);
  const stone=api.materials.concrete(),wood=api.materials.wood||stone;
  const plaster=api.materials.plaster?.(0xc3bcaa)||stone,brick=api.materials.brick?.()||stone;
- const tile=new THREE.MeshStandardMaterial({color:0x735247,roughness:1}),glass=new THREE.MeshStandardMaterial({color:0x30484b,roughness:.6,side:THREE.DoubleSide});
+ const tile=api.materials.roof?.()||new THREE.MeshStandardMaterial({color:0x735247,roughness:1}),glass=new THREE.MeshStandardMaterial({color:0x30484b,roughness:.6,side:THREE.DoubleSide});
  const leaves=new THREE.MeshStandardMaterial({color:0x5a7146,roughness:1}),soil=new THREE.MeshStandardMaterial({color:0x665e42,roughness:1});
  const add=(g,m,x,y,z,parent=details)=>{const o=new THREE.Mesh(g,m);o.position.set(x,y,z);o.receiveShadow=true;parent.add(o);return o;};
  const boxes=[];const solid=(x,z,w,d)=>{api.box(x,z,w,d);boxes.push(footprintBounds(x,z,w,d));};
@@ -51,7 +51,9 @@ export function buildPhuXaCourt(api){
   add(new THREE.PlaneGeometry(w,d).rotateX(-Math.PI/2),soil,x,.025,z);
   for(let i=0;i<12;i++){
    const px=x-w/2+2+(i%6)*(w-4)/5,pz=z-d/2+3+Math.floor(i/6)*(d-6);
-   const shrub=add(new THREE.SphereGeometry(1,10,7),leaves,px,1,pz);shrub.scale.set(1.7,1.1,1.3);
+   if(!canPlaceDistrictBuilding(footprintBounds(px,pz,2.2,1.8)))continue;
+   // Keep the planting inside its bed rather than filling the pavement with spheres.
+   const shrub=add(foliageGeometry(.5),leaves,px,.43,pz);shrub.scale.set(1.1,.75,.9);
   }
  }
  if(api.label){const sign=api.label('SÂN PHÚ XÁ · NGHỈ CHÂN','#d8d0b7');sign.position.set(-178,2.2,-108);sign.scale.set(4.8,.65,1);root.add(sign);}

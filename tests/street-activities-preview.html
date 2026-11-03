@@ -1,0 +1,31 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><title>Kiểm tra sinh hoạt khu phố</title>
+<style>body{margin:0;background:#18312b;color:#f1ecd9;font:14px system-ui}header{padding:8px;display:flex;gap:8px}button{padding:9px}iframe{width:1200px;height:780px;border:0}#result{white-space:pre-line;padding:8px}</style>
+<header><button data-kind="tea">Pha trà</button><button data-kind="flowers">Cắm hoa</button><button data-kind="pump">Bơm xe</button><button data-kind="fishing">Câu cá</button><button id="check" disabled>Kiểm tra thao tác</button><button id="restore" disabled>Khôi phục save</button><span id="status">Phiên riêng 127.0.0.1</span></header><div id="result"></div><iframe title="Sinh hoạt khu phố"></iframe>
+<script type="module">
+import {SAVE_KEY,encodeSnapshot,parseSnapshot} from '../gameplay-state.mjs';
+import {NEIGHBORHOOD_JOBS} from '../neighborhood-jobs.mjs';
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),result=document.querySelector('#result'),keys=[SAVE_KEY,'phu_thuong_story_revision','phu_thuong_game_settings_v3'];let backup,job,goal,kind;
+const wait=ms=>new Promise(r=>setTimeout(r,ms)),doc=()=>frame.contentDocument,saved=()=>parseSnapshot(localStorage.getItem(SAVE_KEY));
+async function until(fn){const end=performance.now()+45000;while(!fn()){if(performance.now()>end)throw Error('Hết thời gian chờ');await wait(60);}}
+function click(label){const b=[...doc().querySelectorAll('#daylife-modal button')].find(b=>b.textContent===label&&!b.disabled);if(!b)throw Error('Thiếu nút '+label);b.click();}
+function tap(code){for(const type of ['keydown','keyup'])frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent(type,{code,bubbles:true}));}
+for(const button of document.querySelectorAll('[data-kind]'))button.onclick=async()=>{try{
+ if(!backup)backup=keys.map(k=>[k,localStorage.getItem(k)]);document.querySelector('#restore').disabled=false;document.querySelector('#check').disabled=true;
+ frame.src='about:blank';await wait(500);kind=button.dataset.kind;job=NEIGHBORHOOD_JOBS.find(j=>j.goals.some(g=>g.game===kind));goal=job.goals.find(g=>g.game===kind);
+ const done=job.goals.slice(0,job.goals.indexOf(goal)).map(g=>g.id);
+ localStorage.setItem(SAVE_KEY,encodeSnapshot({day:2,time:10,coins:55555,playerPosition:{x:goal.x,z:goal.z},camYaw:0,daylife:{day:2,active:{id:job.id,done,quality:100}}}));
+ localStorage.setItem(keys[1],'2');localStorage.setItem(keys[2],JSON.stringify({preset:'medium',camMode:'fps',brightness:1,showWaypoints:false}));
+ frame.src='../index.html?playtest=1';await until(()=>doc()?.querySelector('#interact-prompt')?.dataset.charactersReady);await wait(250);tap('KeyE');await until(()=>doc()?.querySelector('.leisure-scene'));
+ status.textContent='Sẵn sàng · '+job.title;document.querySelector('#check').disabled=false;
+ }catch(e){status.textContent='FAIL '+e.message;}};
+document.querySelector('#check').onclick=async()=>{try{
+ if(kind==='tea'){for(const item of ['Trà','Đá','Chanh'])click(item);click('Giao đúng đơn');}
+ else if(kind==='flowers'){for(const item of ['Hoa cúc','Hoa hồng','Lá xanh'])click(item);click('Giao đúng đơn');}
+ else if(kind==='pump'){for(let i=0;i<6;i++)click('Bơm +3 PSI');click('Kiểm tra lốp');}
+ else for(let i=0;i<3;i++){
+  await until(()=>{const phase=Number(doc().querySelector('[role="meter"]').getAttribute('aria-valuenow'));return phase>=45&&phase<=55;});click('Nhấc cần');if(i<2)await wait(900);
+ }
+ await until(()=>saved().daylife.active?.done.includes(goal.id));result.textContent+='PASS · '+job.title+' · bước được lưu\n';document.querySelector('#check').disabled=true;
+ }catch(e){result.textContent+='FAIL '+e.message+'\n';}};
+document.querySelector('#restore').onclick=async()=>{frame.src='about:blank';await wait(500);backup?.forEach(([k,v])=>v===null?localStorage.removeItem(k):localStorage.setItem(k,v));status.textContent='Đã khôi phục save';};
+</script></html>

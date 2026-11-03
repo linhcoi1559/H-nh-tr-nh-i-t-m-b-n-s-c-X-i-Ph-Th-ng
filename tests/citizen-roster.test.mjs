@@ -1,12 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import {createHash}from'node:crypto';
 import * as THREE from 'three';import {GLTFLoader}from'three/addons/loaders/GLTFLoader.js';
-import {CITIZEN_ROSTER,citizenIdentity,citizenSignature,createCitizenFactory,addCitizenIdentityDetails,QUEST_IDENTITIES,AMBIENT_IDENTITIES,RIDER_IDENTITIES,ARCADE_IDENTITIES,EVENT_IDENTITIES,POLICE_IDENTITIES}from'../citizen-roster.mjs';
+import {CITIZEN_ROSTER,citizenIdentity,citizenSignature,createCitizenFactory,addCitizenIdentityDetails,QUEST_IDENTITIES,AMBIENT_IDENTITIES,RIDER_IDENTITIES,ARCADE_IDENTITIES,EVENT_IDENTITIES,POLICE_IDENTITIES,TEA_CHESS_IDENTITIES}from'../citizen-roster.mjs';
 import {refitHumanProportions,canonicalBoneName}from'../neighborhood-models.mjs';
 import {dressCitizenMaterials,compactCitizenMeshes}from'../citizen-details.mjs';
 async function sources(){return Object.fromEntries(await Promise.all(['player','guard','official','vendor','resident','veteran'].map(async key=>{const path=key==='player'?'player-cozy':`npc-${key}`,b=fs.readFileSync(new URL(`../assets/models/${path}-adult.glb`,import.meta.url));return [key,await new GLTFLoader().parseAsync(b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength),'')];})));}
 test('every assigned street, event, traffic and shop NPC has a stable distinct identity with no hero geometry source',()=>{
- const ids=[...QUEST_IDENTITIES,...AMBIENT_IDENTITIES,...RIDER_IDENTITIES,...ARCADE_IDENTITIES,...EVENT_IDENTITIES,...POLICE_IDENTITIES];assert.equal(ids.length,38);assert.equal(new Set(ids).size,38);assert.equal(CITIZEN_ROSTER.length,38);
- assert.equal(new Set(CITIZEN_ROSTER.map(citizenSignature)).size,38);
+ const ids=[...QUEST_IDENTITIES,...AMBIENT_IDENTITIES,...RIDER_IDENTITIES,...ARCADE_IDENTITIES,...EVENT_IDENTITIES,...POLICE_IDENTITIES,...TEA_CHESS_IDENTITIES];assert.equal(ids.length,41);assert.equal(new Set(ids).size,41);assert.equal(CITIZEN_ROSTER.length,41);
+ assert.equal(new Set(CITIZEN_ROSTER.map(citizenSignature)).size,41);
  for(const p of CITIZEN_ROSTER)for(const key of ['body','face','hair','top','bottom','shoes','hat'])assert.notEqual(p[key],'player');
  assert.throws(()=>citizenIdentity('player'));assert.throws(()=>citizenIdentity('missing'));
 });
